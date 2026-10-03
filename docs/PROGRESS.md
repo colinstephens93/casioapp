@@ -9,13 +9,14 @@ Last updated: after the Electron shell (M1, and M8's window half).
 
 | Metric | Value |
 |---|---|
-| Tests | **393 passing**, 0 failing, across 84 suites and 13 files |
+| Tests | **416 passing**, 0 failing, across 90 suites and 14 files |
 | Typecheck | Clean on all four `tsconfig` files, including the Electron main process |
 | Build | Clean, single pass, and self-verifying: it verifies the preview page *and* the widget page |
 | Screens | All five (Timekeeping, World Time, Alarm, Timer, Stopwatch) plus six setting screens |
-| Shell | Window, tray, config file, notifications, context menu and packaging are **written but cannot be run here** — ENVIRONMENT.md §9 is the checklist |
+| Shell | Window, tray, config file, notifications, context menu and packaging are written; their **wiring is tested against a fake Electron**, but they have never run — ENVIRONMENT.md §9 is the checklist |
 | Can the watch run? | **No** — see [ENVIRONMENT.md](ENVIRONMENT.md). Its *drawing* can be rendered and inspected, and its logic is fully tested. |
-| Git | Committed through M7 (`Continued development`); everything since is uncommitted. |
+| Verify everything | `npm run check` — typecheck, build, tests |
+| Git | Committed through M7 (`continued dev`); everything since is uncommitted. |
 
 ### Test breakdown
 
@@ -32,6 +33,7 @@ Last updated: after the Electron shell (M1, and M8's window half).
 | `test/gestures.test.ts` | 25 | Press, hold at each real duration, chord, repeat cadence |
 | `test/controller.test.ts` | 62 | Cadence, the battery model, the seconds reset, restart, notifications, the host's controls |
 | `test/shell.test.ts` | 32 | The config schema, its repair, the atomic write, window clamping, the toast payload and XML |
+| `test/wiring.test.ts` | 23 | The built shell against a fake Electron: window options, tray menu, notification, IPC surface, boot |
 | `test/catalog.test.ts` | 19 | The watch's 49-code table, extended zones, sorting and exclusion |
 | `test/glyphs.test.ts` | 18 | Glyph coverage, digit uniqueness, collision audit |
 
@@ -341,6 +343,42 @@ unbalanced parenthesis threw *inside the verifier*. A verifier that crashes on i
 than no check — the build reports a failure that is not the code's. `RegExp.escape` now does the
 escaping, and the verifier was confirmed to catch a real break by renaming the `#case` element.
 
+### The shell is wired correctly, and that is now tested rather than hoped
+
+The shell cannot run here, which is not the same as being untestable. `test/wiring.test.ts` runs the
+**built** `.cjs` files against a recording stand-in for Electron, installed by hooking module resolution
+(`modules.registerHooks`, which intercepts `require` as well as `import`).
+
+This closes a specific and nasty gap. Every Electron window option is **optional**, so `nodeintegration`
+typechecks exactly as happily as `nodeIntegration`, and getting it wrong produces a window in the
+taskbar rather than an error naming a line. The same is true of a mistyped tray label, a wrong
+`alwaysOnTop` level, or an AppUserModelID that does not match the installer's `appId`. None is a type
+error; all are now assertions.
+
+**The assertions were shown to be able to fail.** Twelve deliberate corruptions of the built modules —
+`skipTaskbar` off, `contextIsolation` off, the `screen-saver` level, `frame: true`, the toast scenario,
+the AppUserModelID, the sandbox flag, the tray labels, the icon data URL, `timeoutType`, `resizable`,
+and dropping `toastXml` entirely — and all twelve were caught. A test that cannot fail is not evidence.
+
+**One of them was not caught at first**, and finding that was the point of the exercise: the timer
+branch of `notificationFor` is reachable through `Notifier`, but no test asserted on it there — the
+existing test called `show({kind: 'timer'})` and only counted the call. Corrupting the timer's scenario
+in the built module broke nothing. Now asserted on the XML.
+
+**Three bugs in the fake itself**, all of the same species and all worth recording, because a fake of the
+wrong *shape* is worse than no fake — the assertion still runs and still passes or fails for the wrong
+reason:
+
+1. `registerHooks` is **cumulative**, so installing the fake once per test stacked twenty hooks that all
+   resolved to the *first* fake's record. Twenty failures appeared, all pointing at the shell.
+2. `isDestroyed` was a **property** where Electron has a **method**, so `main.cts`'s
+   `getAllWindows().length === 0` guard never fired and a correct guard looked like a bug.
+3. The fake's `getAllWindows()` always answered "none", which made the shell open a second window on
+   every `activate` — again, a correct guard looking like a defect.
+
+And one in my own test: a helper captured `visible` as a parameter instead of reading it through a
+getter, so flipping it changed nothing and the tray "correctly" showed a stale label.
+
 ## A recurring failure worth recordingAcross M2 and M4 I repeatedly **asserted values from memory instead of computing them**, and every
 single one was wrong:
 
@@ -391,6 +429,7 @@ were mechanical rather than remembered.
 | **The config file cannot lose itself** | Twenty successive atomic writes each re-read and parsed; a future-version file refused and left byte-identical |
 | **A window can always be recovered** | Clamping swept over a 6 000-unit grid of positions, asserting a grab handle stays on screen every time |
 | **The toast carries the alarm category** | The `scenario="alarm"` attribute asserted in the XML, since there is no Electron option for it |
+| **The shell passes the right options to Electron** | The built `.cjs` run against a fake Electron; twelve deliberate corruptions of the build, all twelve caught |
 | **The build stays inside the sandbox** | The widget verifier asserts no `require`, `process.env` or `__dirname` reaches the renderer, and that every import resolves |
 | The preview actually works | Build-time verifier: inline script parses, modules resolve, every control id exists |
 | The widget page is wired | Build-time verifier: HTML references files that exist, the entry parses, `main.cjs` keeps its dynamic `import()` |
@@ -403,6 +442,9 @@ were mechanical rather than remembered.
   yield, notifications actually appearing, Focus Assist, packaging and the installed app. None of it can
   be executed here — `docs/ENVIRONMENT.md` §4 explains why and §9 is the sixteen-item checklist for
   whoever has a desktop.
+- **That Electron honours the options the shell passes.** The fake Electron proves the shell's *intent*,
+  and `docs/ENVIRONMENT.md` §12 is explicit that this is not the same as Windows' behaviour. `skipTaskbar`
+  being passed is not the taskbar entry being gone.
 - **Whether the notification category works.** The XML is asserted; whether Windows honours it under
   Focus Assist is not knowable from here.
 - **The rasteriser's own fidelity.** It is an inspection aid, not a source of truth, and it ignores the

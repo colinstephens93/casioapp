@@ -123,6 +123,7 @@ layout test fails, the layout is wrong — change the constants, not the test.**
 | `src/main/tray.cts` | The tray icon and menu | CommonJS; the icon is drawn, not shipped |
 | `src/main/notifications.cts` | The Electron-facing half of notifications | CommonJS |
 | `src/preload/preload.cts` | The five-method context bridge | CommonJS; the renderer's entire outside world |
+| `test/fake-electron.mjs` | The recording stand-in for Electron | Hooks module resolution; **`.mjs` because a `load` hook must return source synchronously** |
 
 ## 5. Traps in this codebase
 
@@ -327,19 +328,27 @@ obvious in the image — including one class (case print over a live field) that
 
 ## 7. What is next
 
-### The shell is written; it needs a desktop
+### The shell is written and its *wiring* is tested; it still needs a desktop
 
-M1 and M8's window half are now implemented: window, tray, config file, notifications, the renderer
-entry point, the letterbox layout, the drag rules and the packaging config. **None of it can be run
-here** — DSH is a non-interactive desktop and Chromium needs the named pipes the sandbox forbids.
+M1 and M8's window half are implemented: window, tray, config file, notifications, the renderer entry
+point, the letterbox layout, the drag rules and the packaging config. **None of it can be run here** —
+DSH is a non-interactive desktop and Chromium needs the named pipes the sandbox forbids.
 
-`docs/ENVIRONMENT.md` §9 is the checklist: sixteen claims, ordered by how likely each is to be wrong,
-each with the requirement it serves and how to check it. Items 6 (always-on-top yielding to fullscreen),
-10 (a toast that Focus Assist respects) and 16 (the AppUserModelID pairing) are the three where a
-problem is most likely, and item 6 is explicitly an approximation rather than an implementation.
+What *is* tested is the wiring. `test/wiring.test.ts` runs the built `.cjs` shell against a recording
+fake Electron, so the window options, tray menu, notification construction, IPC surface and process
+lifecycle are exercised. The point is a gap that static analysis cannot reach: **every Electron option
+is optional**, so `nodeintegration` typechecks as happily as `nodeIntegration`, and a mistake surfaces
+as "the window is in the taskbar" rather than as an error on a line. Twelve deliberate corruptions of
+the built modules were used to confirm those assertions can fail. `docs/ENVIRONMENT.md` §12 says exactly
+what the fake does and does not prove.
 
-`docs/ENVIRONMENT.md` §10 explains why only the pure half of the shell is unit-tested, and §11 why the
-notification's category is toast XML rather than an Electron option.
+`docs/ENVIRONMENT.md` §9 is the remaining checklist: sixteen claims, ordered by how likely each is to be
+wrong, each with the requirement it serves and how to check it. Items 6 (always-on-top yielding to
+fullscreen), 10 (a toast that Focus Assist respects) and 16 (the AppUserModelID pairing) are the three
+where a problem is most likely, and item 6 is explicitly an approximation rather than an implementation.
+
+`docs/ENVIRONMENT.md` §10 explains the ESM/CommonJS split that decides which files can be tested at all,
+and §11 why the notification's category is toast XML rather than an Electron option.
 
 ### Needs a human, not an agent
 

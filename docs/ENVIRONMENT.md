@@ -203,12 +203,11 @@ tested — it means the split has to be deliberate. `src/main` therefore holds t
 
 | Extension | Module system | Imports | Tested? |
 |---|---|---|---|
-| `.cts` | CommonJS, compiled by `tsc` | Electron, and Node built-ins | **No.** Cannot be loaded here at all |
+| `.cts` | CommonJS, compiled by `tsc` | Electron, and Node built-ins | **Yes**, with a fake Electron — see §12 |
 | `.ts` | ESM, compiled by the in-process transpiler | Node built-ins only | **Yes**, directly, with no build step |
 
 The config schema, its per-field repair, the atomic write, the window-clamping rules and the
-notification payload all live in `.ts` files, and `test/shell.test.ts` covers them — 32 tests. What is
-left is the part whose only job is to call Electron.
+notification payload all live in `.ts` files, and `test/shell.test.ts` covers them — 32 tests.
 
 **The boundary is load-bearing and easy to break.** A CommonJS file reaching an ESM one needs a dynamic
 `import()` and a `resolution-mode` attribute on the type-only imports; see HANDOFF.md §5 for the details
@@ -230,3 +229,44 @@ If the toast never appears on a real desktop, the things to check, in order: tha
 `app.setAppUserModelId` ran before the first toast; that `appId` in `electron-builder.yml` matches
 `APP_USER_MODEL_ID`; and that Windows' notification settings allow the app at all — Focus Assist's
 *priority* list is what the `alarm` scenario works around, not a blanket denial.
+
+## 12. The fake Electron, and what it does and does not prove
+
+`test/wiring.test.ts` runs the **built** `.cjs` shell against a recording stand-in for Electron
+(`test/fake-electron.mjs`), so the window options, the tray menu, the notification construction, the IPC
+surface and the process lifecycle are exercised rather than merely typechecked.
+
+**How it works.** `module.registerHooks` (Node 22.15+) hooks `require` as well as `import`,
+synchronously and in-process. The `resolve` hook rewrites the specifier `electron` to a private URL, and
+the `load` hook returns the fake's source from that URL. Only `dist/main` and `dist/preload` are
+intercepted, so anything else in the process that wanted the real module still gets it.
+
+The ESM loader's `register()` cannot do this: `.cjs` files are CommonJS and the ESM loader refuses the
+extension outright ("Unknown file extension .cjs"), so there is no way to import one in order to hook
+it.
+
+**What it proves.** That the shell passes the values it intends to the API it believes it is calling.
+That is not a small thing in code that has never run: every Electron window option is optional, so
+`nodeintegration` typechecks exactly as happily as `nodeIntegration`, and the symptom of getting it
+wrong is a window in the taskbar rather than an error naming a line.
+
+**What it does not prove.** That Electron honours any of it. `skipTaskbar: true` being passed is not the
+taskbar entry being gone. `scenario="alarm"` being in the XML is not Focus Assist letting it through.
+**The fake is an assertion about the shell's intent, not about Windows' behaviour**, and §9 remains the
+only way to check the latter.
+
+Two things to be careful of when reading these tests:
+
+1. **The fake is written to match Electron's shapes, and a fake with the wrong shape is worse than no
+   fake** — the assertion still runs, and still passes or fails, for the wrong reason. This bit during
+   development: `isDestroyed` was a property where Electron has a method, so `main.cts`'s
+   `getAllWindows().length === 0` guard silently never fired and a *correct* guard looked like a bug.
+2. **The assertions were checked by mutation.** Twelve deliberate corruptions of the built modules —
+   `skipTaskbar` off, `contextIsolation` off, the `screen-saver` level, `frame: true`, the toast
+   scenario, the AppUserModelID, the sandbox flag, the tray labels, the icon data URL, `timeoutType`,
+   `resizable`, and dropping `toastXml` — and all twelve were caught. One initially was not: the timer
+   branch of `notificationFor` was reachable through `Notifier` but never asserted, which is now fixed.
+   A test that cannot fail is not evidence, so the mutation pass is the evidence that this one can.
+
+`npm test` needs `dist/` to exist for these tests; `npm run check` sequences typecheck, build and tests
+so that a fresh checkout works in one command.

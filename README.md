@@ -40,13 +40,17 @@ that works both inside the sandbox and on an ordinary machine. Full explanation 
 Then:
 
 ```sh
-npm test         # 393 unit tests: time, zones, DST, map, glyphs, face, screens, gestures, battery
+npm test         # 416 unit tests: time, zones, DST, map, glyphs, face, screens, gestures, battery, shell
+npm run check    # typecheck + build + tests, in the order a clean checkout needs
 npm run build    # compiles main/preload to CommonJS and shared/renderer to ESM, then verifies both pages
 npm run typecheck  # four tsconfigs — the tests cannot see types, so this is not optional
 npm start        # builds, then launches the widget
 npm run watch    # rebuilds shared, renderer and main on change
 npm run package  # builds, then makes a Windows installer (electron-builder is not installed here)
 ```
+
+Prefer `npm run check` for a clean checkout: the shell's wiring tests run the **built** `dist/main`
+artifacts, so `npm test` on its own needs a build to have happened first.
 
 ### A trap when launching Electron
 
@@ -91,13 +95,13 @@ TypeScript itself.
 
 ## Progress
 
-**393 tests passing, typecheck clean on all four configs.** The verifiable core is complete — see
+**416 tests passing, typecheck clean on all four configs.** The verifiable core is complete — see
 [docs/PROGRESS.md](docs/PROGRESS.md) for the history and [docs/HANDOFF.md](docs/HANDOFF.md) for where
 to pick up.
 
 | Area | State |
 |---|---|
-| Toolchain, build, tests | Working; the build verifies both the preview page and the widget page |
+| Toolchain, build, tests | Working; the build verifies both the preview page and the widget page, and `npm run check` runs everything |
 | Time engine: offsets, wall clock, ±1 day marker, DST, formatting | Built, 35 tests |
 | City catalogue: the watch's 49 codes plus extended offsets | Built, verified against the manual's list |
 | Seven-segment glyph encoding | Built, 18 tests, collisions declared and audited |
@@ -109,7 +113,7 @@ to pick up.
 | Battery model, illumination, context menu | Working, calibrated to Casio's rating |
 | Config file: schema, repair, atomic write | Built, 32 tests — `src/main/config.ts` |
 | Browser preview with live controls | Working — open `dist/preview/index.html` |
-| Electron shell: window, tray, notifications, packaging | **Written, not run.** See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) §9 |
+| Electron shell: window, tray, notifications, packaging | **Written, and its wiring tested against a fake Electron — but never run.** See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) §9 |
 
 ### Running the widget
 
@@ -122,6 +126,11 @@ The widget **cannot be launched in the development sandbox** this was built in: 
 non-interactive desktop, and Chromium needs the named pipes the sandbox forbids. So the shell is
 written and reviewed but never executed — `docs/ENVIRONMENT.md` §9 lists the sixteen claims a human
 should check on a real machine, ordered by how likely each is to be wrong.
+
+What *is* checked here is that the shell passes the right things to Electron: `test/wiring.test.ts` runs
+the built code against a recording stand-in, which catches a mistyped option name — invisible to `tsc`,
+since every Electron option is optional. §12 of that document is explicit about the difference between
+"the shell intends this" and "Windows does this".
 
 ### Seeing it without running it
 
