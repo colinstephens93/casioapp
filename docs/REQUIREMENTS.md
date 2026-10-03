@@ -183,8 +183,8 @@ The watch has **three modes** on the MODE button and **two further screens** rea
 
 | ID | Requirement |
 |---|---|
-| ZON-1 | The visible face uses the watch's full city code set, as printed in the manual's City Code Table. |
-| ZON-2 | The city table is modelled as **data**, not code. Casio's "48 cities / 31 time zones" claim must not be hard-coded: the manual's own table yields 46 codes + UTC across 30 offsets. |
+| ZON-1 | The visible face uses the watch's full city code set — 48 cities plus UTC — as printed in the manual's City Code Table. |
+| ZON-2 | The city table is modelled as **data**, not code. Casio's "48 cities / 31 time zones" claim must not be hard-coded: the table's size is computed, and `npm test` asserts the catalogue matches the manual's printed code list exactly. |
 | ZON-3 | `UTC` is a selectable code and is distinct from the Home City. |
 | ZON-4 | IANA zone identifiers back each city code, so DST transitions are correct indefinitely without manual intervention. |
 | ZON-5 | timan's extended offsets are retained, including `+05:45` (Kathmandu) and `+12:45` (Chatham), which the watch itself cannot display. |

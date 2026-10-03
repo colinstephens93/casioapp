@@ -1,0 +1,22 @@
+{
+  "name": "casioapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Desktop clock widget modelled on the Casio AE-1200WH (module 3198).",
+  "scripts": {
+    "fetch:electron": "node scripts/fetch-electron.mjs",
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/build.mjs",
+    "watch": "node scripts/watch.mjs",
+    "start": "npm run build && node scripts/run.mjs",
+    "test": "node --test --test-isolation=none \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.shared.json && tsc -p tsconfig.renderer.json",
+    "verify": "node scripts/verify-preview.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^40.0.0",
+    "typescript": "^5.9.2"
+  }
+}

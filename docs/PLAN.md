@@ -16,12 +16,34 @@ Everything after M3 is independently useful, so the widget is demonstrable long 
 | M2 | The shell: case and LCD | DIS-1…DIS-9, DAT-3, BR-1, BR-2 | L | A convincing blank watch you can resize |
 | M3 | Time engine | ZON-1…ZON-8, DST-1…DST-6, PRS-5, DAT-1, NFR-3, NFR-7 | M | Correct offsets and DST, unit-tested, no UI |
 | M4 | Timekeeping, subdial, world map | TIM-1…TIM-12, ANA-1…ANA-5, MAP-1…MAP-7, DAT-2, DAT-4 | L | A working world clock on screen |
-| M5 | World Time and Multi Time | WLD-1…WLD-5, MOD-1…MOD-6 | M | All four registers, band follows the city |
-| M6 | Alarm, Timer, Stopwatch | ALM-1…ALM-12, TMR-1…TMR-8, SW-1…SW-10 | L | All five screens functional |
-| M7 | Interaction fidelity | INT-1…INT-8, MUT-1…MUT-3, TIM-4…TIM-11, ALM-4 | M | Hold, chord, flashing fields, mute |
+| M5 | World Time and Multi Time | WLD-1…WLD-5, MOD-1…MOD-6 | M | **Done.** All four registers, band follows the city |
+| M6 | Alarm, Timer, Stopwatch | ALM-1…ALM-12, TMR-1…TMR-8, SW-1…SW-10 | L | **Done.** All five screens functional |
+| M7 | Interaction fidelity | INT-1…INT-8, MUT-1…MUT-3, TIM-4…TIM-11, ALM-4 | M | **Done.** Hold, chord, flashing fields, mute, Auto Display |
 | M8 | Battery, illumination, polish, packaging | BAT-1…BAT-6, LIT-1…LIT-4, NFR-4, NFR-8, NFR-9 | M | Shippable installer |
 
 Sizes are relative effort, not calendar time.
+
+### What M5–M7 actually delivered, and where it differs from the plan above
+
+The plan's milestone list is unchanged and every requirement ID kept its owner. Three things are worth
+recording because they were decisions rather than transcription:
+
+1. **The logic split further than planned.** The plan put the mode state machine in the renderer
+   (`src/renderer/state/machine.ts`). It is in `src/shared/machine.ts` instead, with a separate
+   `controller.ts` holding every timer. The reason is that the machine is a **pure reducer** and the
+   controller is the only object with a clock in it, which is what let 69 transition tests run without
+   a single real millisecond passing — and it is what makes the same code usable from the Electron
+   main process later without dragging the DOM along.
+2. **`src/shared/watch.ts` is no longer the widget's state.** `controller.ts` supersedes it: the
+   controller owns the same four registers plus the screens, alarms, timer, stopwatch and gestures.
+   `watch.ts` remains because `map.ts`'s tests and the map band's Home City rule still use it, and
+   because deleting a working, tested module is not this milestone's job. **A future session should
+   fold the two together** — there is currently one concept ("the live watch") with two owners.
+3. **The alarm screen's sixth slot is modelled as a position, not a sixth alarm.** The hourly signal
+   has no time of its own, so giving it an `AlarmDef` with a dummy time would have made it printable by
+   mistake. `screenIndex.alarm` is a position in `1 2 3 4 5 SIG`, and `alarmSlot()` maps it to the
+   label. Conflating the position with the slot number was a real bug (see PROGRESS.md).
+
 
 ## 2. Architectural decisions taken before coding
 
@@ -45,6 +67,31 @@ These are settled here because unwinding them later is expensive.
 6. **Config schema is versioned from the first commit** (`{"version": 1, …}`), and is written atomically
    (temp file + rename) so a crash at the wrong moment cannot truncate it.
 7. **No drawing reuse from the reference project.** Only its logic and data are lifted, under MIT.
+8. **One-way dependency.** `src/shared` is the lowest layer: it must not import from `src/main`,
+   `src/renderer` or `src/preload`, and must not touch the DOM. The renderer *bundles* `src/shared`;
+   nothing in `src/shared` may reach upward. This is what lets the same logic run under Node for tests
+   and in the browser for the preview, and it is enforced by review, not by tooling.
+
+### Revised build order (why the plan was reordered)
+
+M0 established that **the Electron GUI cannot run in this development sandbox**: DSH executes commands
+on a non-interactive desktop, so no window can be shown, and Chromium's multi-process IPC needs the
+named pipes this sandbox forbids. See [ENVIRONMENT.md](ENVIRONMENT.md) for the diagnostics.
+
+The consequences for sequencing, effective immediately:
+
+- The **verifiable core is built first** — `src/shared` plus the case and LCD as pure SVG. These are
+  testable and previewable here, and they are where correctness and fidelity actually live.
+- The **renderer stays Electron-free** and is built to a standalone HTML file, so the face can be
+  opened in an ordinary browser and judged by eye. This is the only way to review fidelity in this
+  environment.
+- **Electron integration moves last.** It is written, but its verification is deferred to a normal
+  desktop where `ELECTRON_RUN_AS_NODE` is not set.
+- Consequently M0's "exit criteria" is met in build terms only; its launch criterion is deferred rather
+  than claimed.
+
+This reordering changes *when* work happens, not *what* is required: every requirement ID keeps its
+milestone owner.
 
 ### Proposed repository layout
 
@@ -146,7 +193,7 @@ Lift `time.ts` and the band maths from the reference project (MIT, attributed), 
 
 **Exit criteria:** correct local time; band tracks the city you select; subdial stays on T-1.
 
-### M5 — World Time and Multi Time
+### M5 — World Time and Multi Time — **done**
 
 - MODE cycling across the three modes and two inner screens (MOD-1).
 - SEARCH cycles T-1…T-4 with the transient T-number (MOD-2, MOD-3).
@@ -156,7 +203,7 @@ Lift `time.ts` and the band maths from the reference project (MIT, attributed), 
 
 **Exit criteria:** four registers all reachable and correct; the map band and the day marker follow.
 
-### M6 — Alarm, Timer, Stopwatch
+### M6 — Alarm, Timer, Stopwatch — **done, except the notification**
 
 - Five alarms plus the hourly signal; Daily/One-time/Off cycle; auto-arm on entering settings; test alarm
   on hold; 10-second sound stopping on any button; flashing indicator in all modes (ALM-1…ALM-9).
@@ -170,7 +217,7 @@ Lift `time.ts` and the band maths from the reference project (MIT, attributed), 
 
 **Exit criteria:** a real alarm fires a Windows notification; a countdown survives a mid-flight restart.
 
-### M7 — Interaction fidelity
+### M7 — Interaction fidelity — **done, except the context menu**
 
 - Press, hold and chord recognition, with visible pressed state and visible chord state (INT-4, INT-8).
 - The exact hold durations: ~1 s, ~2 s, ~3 s (INT-5).

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+.npm-cache/
+.electron-cache/
+# Scratch artefacts from the rasterisation and headless-browser inspection tooling.
+.edge-profile/
+_tmp*.svg
+*.log

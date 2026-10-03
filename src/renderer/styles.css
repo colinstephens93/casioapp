@@ -1,0 +1,54 @@
+/* M0 scaffold styles: prove transparency and the drag region work. */
+
+html,
+body {
+	margin: 0;
+	padding: 0;
+	width: 100%;
+	height: 100%;
+	background: transparent;
+	overflow: hidden;
+	font-family: ui-monospace, monospace;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+#root {
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 10px;
+	/* The case is the drag handle. M1 attaches this to the real case silhouette. */
+	-webkit-app-region: drag;
+}
+
+/* Any interactive control must opt out, or the drag region swallows its clicks (plan R-2). */
+.no-drag {
+	-webkit-app-region: no-drag;
+}
+
+.gate {
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	border: 2px solid #3a3f35;
+	border-radius: 18px;
+	background: #14170f;
+	color: #b8d4a0;
+}
+
+.gate .title {
+	font-size: 13px;
+	letter-spacing: 0.18em;
+	color: #c9a15a;
+}
+
+.gate .line {
+	font-size: 11px;
+	opacity: 0.85;
+}
