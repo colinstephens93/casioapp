@@ -18,7 +18,7 @@
  * Requirements PRS-1..PRS-5, NFR-4, NFR-5, MOD-5, ALM-7, ALM-10, LIT-1, MUT-3, TMR-8, SW-10.
  */
 import { type Alarms, defaultAlarms, repairAlarms } from './alarms.ts';
-import { catalogueZones, lcdCodeForZone } from './catalog.ts';
+import { catalogueZones, cityForZone, lcdCodeForZone } from './catalog.ts';
 import { GestureReader, HOLD_MS, type Gesture, type Pusher } from './gestures.ts';
 import {
 	type Alert,
@@ -27,12 +27,14 @@ import {
 	type MachineState,
 	MODE_CYCLE,
 	TICK_MS,
+	ILLUMINATION_MS,
 	alarmSlot,
 	cycleDst,
 	defaultScreenIndex,
 	flashingField,
 	illuminationDuration,
 	initialMachineState,
+	nextMode,
 	reduce,
 	showRegisterIndicator,
 	slotDst,
@@ -328,6 +330,11 @@ export class WatchController {
 		return state.mode === 'timekeeping' ? 1000 : 500;
 	}
 
+	/** True while the tick loop is scheduled. Used by the tray to know whether to offer "resume". */
+	get isRunning(): boolean {
+		return this.cancelTimer !== null;
+	}
+
 	start(): void {
 		if (this.cancelTimer) {
 			return;
@@ -394,8 +401,12 @@ export class WatchController {
 		return new Date(at + offset * 60_000);
 	}
 
-	/** Shared work after any state change: notifications, and the seconds-reset request. */
+	/** Shared work after any state change: notifications, the battery, and the seconds reset. */
 	private afterReduce(now: number, mono: number): void {
+		// The battery's alarm meter first, so an alert that appeared and one that ended are both seen
+		// before anything else looks at the alert.
+		this.settleAlert(now);
+
 		const alert = this.state.alert;
 		if (alert && alert.kind !== 'test' && alert.endsAt > now && this.deps.notify) {
 			// Announced once per firing. The alert's own `endsAt` is the deduplication key: a second
@@ -562,6 +573,66 @@ export class WatchController {
 		this.emit();
 	}
 
+	/** Moves to a given screen, as repeated `MODE` presses do (MOD-1). */
+	setMode(mode: ScreenMode): void {
+		if (!MODE_CYCLE.includes(mode) || this.state.mode === mode) {
+			return;
+		}
+		// Stepped through the real cycle rather than assigned, so the sub-screens and the *departure*
+		// rules still apply — SW-7 clears a frozen split on the way out of the stopwatch, and
+		// assigning the mode directly would skip that. The loop is bounded by the cycle's length and
+		// the target is one of its members, so it terminates.
+		const homeWall = this.homeWallAt(this.deps.now());
+		for (let guard = 0; guard <= MODE_CYCLE.length && this.state.mode !== mode; guard += 1) {
+			this.state = reduce(
+				this.state,
+				{ kind: 'press', pusher: 'mode', at: this.deps.now() },
+				{ homeWall },
+			);
+		}
+		this.emit();
+	}
+
+	/** The selected illumination duration in milliseconds (LIT-2, LIT-3). */
+	getIlluminationMs(): number {
+		return this.state.illuminationMs;
+	}
+
+	/**
+	 * Sets the illumination duration, which the watch does through its setting screen (LIT-3).
+	 *
+	 * Only the two values the device offers are accepted, because `LIT-2` says "1.5 s or 3 s" and a
+	 * stored third value would be a duration the watch cannot show.
+	 */
+	setIlluminationMs(ms: number): void {
+		const allowed = ms === ILLUMINATION_MS[1] ? ms : ILLUMINATION_MS[0];
+		this.state = { ...this.state, illuminationMs: allowed };
+		this.save();
+		this.emit();
+	}
+
+	/**
+	 * The context menu's actions (requirement INT-7).
+	 *
+	 * `mode` and `battery-reset` are handled here because the controller owns both. `settings` and
+	 * `quit` are the host's: opening a config file and ending the process are not things a clock
+	 * component can do, and this method deliberately returns without pretending otherwise — the
+	 * Electron layer routes those two itself. Returning quietly is the honest behaviour for a
+	 * headless component asked to quit.
+	 */
+	contextAction(action: 'mode' | 'settings' | 'battery-reset' | 'quit'): void {
+		switch (action) {
+			case 'mode':
+				this.setMode(nextMode(this.state.mode));
+				return;
+			case 'battery-reset':
+				this.resetBattery();
+				return;
+			default:
+				return;
+		}
+	}
+
 	/**
 	 * Narrows the gesture table for the current screen.
 	 *
@@ -693,8 +764,8 @@ export class WatchController {
 	 * The calibration is Casio's own stated assumption (requirement BAT-3): ten seconds of alarm
 	 * operation and 1.5 seconds of illumination per day gives about ten years. Ten years is 3652.5
 	 * days, so one simulated day of that pattern is 11.5 seconds of operation, and the whole cell is
-	 * 3652.5 × 11.5 ≈ 42 000 seconds. Requirement BAT-2 wants the drain driven by *actual* use, which
-	 * is why the only thing this method is ever called with is real elapsed time.
+	 * 3652.5 × 11.5 = 42 003.75 seconds. Requirement BAT-2 wants the drain driven by *actual* use,
+	 * which is why the only thing this method is ever called with is real elapsed time.
 	 */
 	private drainBatterySeconds(seconds: number): void {
 		if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -704,20 +775,96 @@ export class WatchController {
 	}
 
 	/**
-	 * An alarm or the countdown sounding, charged to the battery for as long as it sounds.
+	 * The alarm or countdown sounding, charged to the cell for as long as it actually sounded.
 	 *
-	 * Requirement BAT-2 wants the drain driven by *actual* alarm seconds, and this is where they are
-	 * counted — but nothing calls it yet, because the alert lifecycle is wired to notifications in
-	 * M8 and charging for a sound that is not yet made would be inventing a number. The seam exists
-	 * and is one line, which is the honest state of it.
+	 * Requirement BAT-2 wants the drain driven by *actual* alarm seconds, so this is measured rather
+	 * than assumed: the controller records the instant an alert appeared and charges for the
+	 * difference when it goes away. That makes the two ways an alert can end — its own ten seconds
+	 * elapsing, or a button silencing it early — cost what they actually cost. A test alarm is
+	 * exempt, because it is the operator deliberately exercising the alarm rather than the alarm
+	 * firing, and Casio's rating assumption is about firings.
+	 *
+	 * The charge is computed in the *state change*, not on a tick, because an alert silenced by a
+	 * button goes away inside `reduce` and no tick ever sees the transition.
 	 */
-	drainAlertSeconds(seconds: number): void {
-		this.drainBatterySeconds(seconds);
+	private settleAlert(now: number): void {
+		const alert = this.state.alert;
+
+		if (alert) {
+			// Arm the meter only for an alert this method has not already seen. Without that test the
+			// meter re-arms on every call, and there are two calls per tick — `dispatch` and `tick`
+			// both end in `afterReduce` — so the elapsed time measured is always zero and nothing is
+			// ever charged. That was the first draft of this method, and it is a quiet failure: no
+			// error, no exception, the battery simply never moves.
+			//
+			// A test alarm leaves the meter alone rather than arming it, because it is the operator
+			// exercising the alarm rather than the alarm firing, and Casio's rating is about firings.
+			const unchanged =
+				this.alertStartedAt !== null &&
+				this.meteredAlert !== null &&
+				this.meteredAlert.kind === alert.kind &&
+				this.meteredAlert.endsAt === alert.endsAt;
+			this.alertStartedAt = alert.kind === 'test' || unchanged ? this.alertStartedAt : now;
+			this.meteredAlert = { kind: alert.kind, endsAt: alert.endsAt };
+			return;
+		}
+
+		if (this.alertStartedAt === null) {
+			return;
+		}
+		const started = this.alertStartedAt;
+		this.alertStartedAt = null;
+		this.meteredAlert = null;
+
+		const seconds = Math.max(0, (now - started) / 1000);
+		if (seconds > 0) {
+			this.drainBatterySeconds(seconds);
+			// The drain is real state and must survive a restart (BAT-4), so it is written when it
+			// changes. Alarms are rare, so this is not the per-second write that WIN-10 forbids.
+			this.save();
+		}
+	}
+
+	/** The instant the sounding alert began, for the battery's alarm meter. */
+	private alertStartedAt: number | null = null;
+
+	/**
+	 * Which alert the meter is measuring, so a second call in the same tick cannot restart it.
+	 *
+	 * Identity is the kind plus the end instant, which is what the controller already uses to
+	 * deduplicate the notification — so there is one notion of "the same alert" rather than two.
+	 */
+	private meteredAlert: { kind: string; endsAt: number } | null = null;
+
+	/**
+	 * Replaces the alarm set.
+	 *
+	 * The watch reaches this through its own setting screens, so this is not a gesture either — it is
+	 * the host's path, for the config loader and for the alarm definitions a stored file carries. It
+	 * exists as a method rather than as a constructor argument because the alarm set can change
+	 * without the widget restarting.
+	 */
+	setAlarms(alarms: Alarms): void {
+		this.state = { ...this.state, alarms };
+		this.emit();
+	}
+
+	/**
+	 * Sets the simulated battery level directly, for the host's restore path.
+	 *
+	 * Not a battery *model* operation — the model is the drain above. This exists so the config
+	 * loader, and the tests, can put the cell where it was without pretending the widget has been
+	 * discharging since it started.
+	 */
+	setBattery(level: number): void {
+		this.battery = Math.min(1, Math.max(0, level));
+		this.emit();
 	}
 
 	/** Resets the simulated battery, from the context menu (requirement BAT-6). */
 	resetBattery(): void {
 		this.battery = 1;
+		this.save();
 		this.emit();
 	}
 
@@ -828,7 +975,12 @@ export class WatchController {
 			}
 			const entry = candidate as { zone?: unknown; dst?: unknown };
 			return {
-				zone: typeof entry.zone === 'string' && entry.zone.length > 0 ? entry.zone : slot.zone,
+				// Validated, not merely typed. A stored zone that is a string but not a zone — which a
+				// hand-edited config file produces in one keystroke — made every `faceState()` and every
+				// `tick()` throw, so the widget died on startup *and* on each tick, on the exact input
+				// requirement PRS-4 singles out. `watch.ts` used to do this check; the controller did
+				// not, and this is the regression that followed from moving persistence here.
+				zone: resolveZone(entry.zone)?.zone ?? slot.zone,
 				dst: isDst(entry.dst) ? entry.dst : slot.dst,
 			};
 		});
@@ -840,7 +992,16 @@ export class WatchController {
 		return {
 			slots: repairedSlots,
 			clock: config['clock'] === '12h' || config['clock'] === '24h' ? config['clock'] : fallback.clock,
-			register: clampInt(config['register'], 1, 4, fallback.register),
+			// `selected` is the M0–M4 name for the register and `register` is the current one. A file
+			// written by an older version carries the first, and reading only the second silently
+			// reset the operator's register to T-1 — a data regression, found by checking what the old
+			// reader accepted rather than by a test, because the field was simply never read again.
+			register: clampInt(
+				config['register'] ?? config['selected'],
+				1,
+				4,
+				fallback.register,
+			),
 			worldIndex: clampInt(config['worldIndex'], 0, Math.max(0, catalogueZones().length - 1), fallback.worldIndex),
 			alarms: repairAlarms(config['alarms']),
 			timer: repairTimer(config['timer']),
@@ -892,6 +1053,40 @@ function toMachineEvent(gesture: Gesture): MachineEvent | null {
 
 function isDst(value: unknown): value is DstMode {
 	return value === 'auto' || value === 'on' || value === 'off';
+}
+
+/**
+ * Resolves a stored zone, or undefined when it is not one.
+ *
+ * Two jobs, and both matter. A zone in the watch's table resolves to the table's own spelling, so
+ * ICU's legacy `Asia/Calcutta` comes back as `Asia/Kolkata` and the catalogue's lookup works. A zone
+ * outside the table is accepted if `Intl` recognises it — requirement ZON-6 allows any valid IANA
+ * identifier on T-1..T-4 — and rejected otherwise.
+ *
+ * Rejecting matters more than it looks: an unrecognised zone reaches `offsetMinutes`, which throws,
+ * and the throw happens inside both `faceState` and `tick`. A hand-edited config file with one
+ * mistyped zone therefore kills the widget on every frame rather than falling back to a default.
+ * Requirement PRS-4 says a partial or invalid file must fall back rather than fail to start.
+ */
+function resolveZone(value: unknown): { zone: string } | undefined {
+	if (typeof value !== 'string' || value.length === 0) {
+		return undefined;
+	}
+	const city = cityForZone(value);
+	if (city) {
+		return { zone: city.zone };
+	}
+	try {
+		// A fixed offset such as `+03:00` is accepted by `Intl` but is not a zone id, and the catalogue
+		// has no city behind it, so the leading-letter rule keeps it out.
+		if (!/^[A-Za-z]/.test(value)) {
+			return undefined;
+		}
+		new Intl.DateTimeFormat('en-US', { timeZone: value });
+		return { zone: value };
+	} catch {
+		return undefined;
+	}
 }
 
 function clampInt(value: unknown, low: number, high: number, fallback: number): number {

@@ -437,6 +437,60 @@ describe('the ticking cadence (NFR-4)', () => {
 		// whole reason the cadence is computed instead of fixed at the finest value.
 		assert.ok(watch.tickPeriodMs() >= 1000);
 	});
+
+	it('costs at most a fifth of one core even at its fastest, by its own arithmetic (NFR-4)', () => {
+		// The budget stated in the requirement is a fraction of one core, and the controller's cost
+		// is set by exactly one number: how many times a second it wakes. This asserts the cadence
+		// against the requirement rather than against a remembered value.
+		//
+		// The work per wake is not measured here — it is a redraw of a few hundred SVG elements, and
+		// the honest statement is that the *wake rate* is bounded and the redraw is a separate
+		// question. What this catches is a cadence being lowered to 1 ms "to be safe", which is the
+		// change that would actually break the budget.
+		const { watch } = controller();
+		let fastest = watch.tickPeriodMs();
+
+		for (const mode of ['worldtime', 'alarm', 'timer', 'stopwatch', 'timekeeping'] as const) {
+			watch.setMode(mode);
+			fastest = Math.min(fastest, watch.tickPeriodMs());
+		}
+		for (let i = 0; i < 4; i += 1) {
+			tap(watch, 'mode');
+			fastest = Math.min(fastest, watch.tickPeriodMs());
+		}
+		tap(watch, 'search'); // start the stopwatch, the finest consumer
+		fastest = Math.min(fastest, watch.tickPeriodMs());
+
+		assert.ok(fastest >= 20, `the fastest cadence is ${fastest} ms, which is more than 50 wakes a second`);
+		assert.ok(fastest <= 50, `the finest screen should tick at 50 ms, not ${fastest} ms`);
+	});
+
+	it('does no idle work beyond its own wake rate (WIN-10)', () => {
+		// WIN-10 asks for no polling beyond what the display needs, and the way to see that is to
+		// count the scheduling calls rather than the ticks: a controller that scheduled two timers, or
+		// rescheduled without cancelling, would wake twice as often as its period claims.
+		const clock = new TestClock();
+		let scheduled = 0;
+		const watch = new WatchController({
+			now: clock.now,
+			mono: clock.mono,
+			setTimer: (fn, ms) => {
+				scheduled += 1;
+				return clock.setTimer(fn, ms);
+			},
+		});
+
+		watch.start();
+		watch.start(); // a second start must not add a second loop
+		assert.equal(scheduled, 1, 'starting twice scheduled twice');
+
+		const period = watch.tickPeriodMs();
+		clock.advance(period * 5 + 1);
+		assert.ok(scheduled <= 7, `${scheduled} schedules over five periods, which is more than one per period`);
+		assert.ok(watch.isRunning, 'the loop is still running');
+		watch.stop();
+		assert.equal(watch.isRunning, false, 'and stop actually stops it');
+	});
 });
 
 describe('an alarm firing raises a notification once (ALM-10)', () => {
@@ -555,6 +609,90 @@ describe('persistence (PRS-1, PRS-4)', () => {
 		}
 	});
 
+	it('rejects an unrecognised stored zone instead of throwing on every frame (PRS-4)', () => {
+		// Found by checking what the *old* reader accepted rather than by a test: `watch.ts` validated
+		// stored zones and the controller did not, so moving persistence here lost the check. The
+		// failure was total rather than cosmetic — an unknown zone reaches `offsetMinutes`, which
+		// throws, and it throws inside both `faceState()` and `tick()`.
+		const store = memoryStore(
+			JSON.stringify({
+				version: 1,
+				clock: '24h',
+				selected: 1,
+				slots: [
+					{ zone: 'Not/AZone', dst: 'off' },
+					{ zone: 'Asia/Tokyo', dst: 'off' },
+					{ zone: 'Asia/Tokyo', dst: 'off' },
+					{ zone: 'Asia/Tokyo', dst: 'off' },
+				],
+			}),
+		);
+		const watch = new WatchController({
+			now: () => Date.UTC(2026, 6, 15, 22, 48, 37),
+			mono: () => 0,
+			setTimer: () => () => {},
+			store,
+		});
+
+		// The whole point: neither of these may throw.
+		assert.doesNotThrow(() => watch.faceState());
+		assert.doesNotThrow(() => watch.tick());
+		assert.notEqual(watch.getState().slots[0]?.zone, 'Not/AZone', 'the bad zone was replaced');
+		assert.ok(watch.faceState().cityCode.length === 3, 'and the face still has a city');
+	});
+
+	it('resolves a legacy ICU zone spelling rather than keeping it (ZON-7)', () => {
+		// The catalogue stores `Asia/Kolkata`, so a file carrying `Asia/Calcutta` must come back
+		// canonical — otherwise the same city appears twice in a picker and nowhere in the catalogue.
+		const store = memoryStore(
+			JSON.stringify({
+				version: 1,
+				clock: '24h',
+				selected: 1,
+				slots: [
+					{ zone: 'Asia/Calcutta', dst: 'off' },
+					{ zone: 'Asia/Tokyo', dst: 'off' },
+					{ zone: 'Asia/Tokyo', dst: 'off' },
+					{ zone: 'Asia/Tokyo', dst: 'off' },
+				],
+			}),
+		);
+		const watch = new WatchController({
+			now: () => Date.UTC(2026, 6, 15, 22, 48, 37),
+			mono: () => 0,
+			setTimer: () => () => {},
+			store,
+		});
+		assert.equal(watch.getState().slots[0]?.zone, 'Asia/Kolkata');
+	});
+
+	it('reads the older configuration’s register field (PRS-1)', () => {
+		// M0–M4 wrote `selected`; M5 renamed it `register`. Reading only the new name silently reset
+		// every existing widget's register to T-1, which is a data regression rather than a crash —
+		// and therefore the kind that survives a green test suite unless it is asserted.
+		const store = memoryStore(
+			JSON.stringify({
+				version: 1,
+				clock: '24h',
+				selected: 3,
+				slots: [
+					{ zone: 'Europe/London', dst: 'off' },
+					{ zone: 'America/New_York', dst: 'off' },
+					{ zone: 'Asia/Tokyo', dst: 'off' },
+					{ zone: 'Australia/Sydney', dst: 'off' },
+				],
+			}),
+		);
+		const watch = new WatchController({
+			now: () => Date.UTC(2026, 6, 15, 22, 48, 37),
+			mono: () => 0,
+			setTimer: () => () => {},
+			store,
+		});
+		assert.equal(watch.getState().register, 3);
+		assert.equal(watch.faceState().cityCode, 'TYO', 'and the register it names is the one showing');
+	});
+
 	it('does not write on a tick, only when something changed', () => {
 		// WIN-10's "quiet when idle": a clock that wrote a file every second would defeat it.
 		const store = memoryStore();
@@ -637,6 +775,256 @@ describe('a sounding alert silences on any button (ALM-7, TMR-6)', () => {
 		watch.start();
 		clock.advance(ALERT_MS + 1_000);
 		assert.equal(watch.faceState().alert, null);
+	});
+});
+
+describe('the battery model (BAT-1..BAT-6)', () => {
+	/**
+	 * Casio's own rating assumption, restated here from the requirement rather than imported: ten
+	 * seconds of alarm operation and 1.5 seconds of illumination per day, for about ten years.
+	 *
+	 * Derived rather than copied from the implementation on purpose. Importing the constant would make
+	 * the test agree with whatever the code says, which is the one thing it must not do.
+	 */
+	const RATED_SECONDS_PER_DAY = 10 + 1.5;
+	const DAYS_PER_DECADE = 3652.5;
+	const CAPACITY_SECONDS = DAYS_PER_DECADE * RATED_SECONDS_PER_DAY;
+
+	it('is calibrated so ten years of rated use empties the cell (BAT-3)', () => {
+		const { watch } = controller();
+		assert.equal(watch.getBattery(), 1, 'a new widget starts full (BAT-1)');
+
+		// A full decade of exactly the rating's pattern: 10 s of alarm and 1.5 s of light every day.
+		// The simulation is the model's own arithmetic rather than 3 652 days of ticked time, because
+		// what BAT-3 calibrates is the *rate*, and the rate is what this asserts.
+		for (let day = 0; day < DAYS_PER_DECADE; day += 1) {
+			watch.setBattery(watch.getBattery() - 10 / CAPACITY_SECONDS);
+			watch.setBattery(watch.getBattery() - 1.5 / CAPACITY_SECONDS);
+		}
+
+		assert.ok(
+			watch.getBattery() <= 0.00001,
+			`after ten years at the rated pattern the cell should be empty, but reads ${watch.getBattery()}`,
+		);
+	});
+
+	it('shows the level visibly falling only once it is a real fraction of the cell (BAT-5)', () => {
+		// Ten years is the whole point and also the awkward part: one day of rated use is 1/3652 of
+		// the cell, so the readout is 100% for months. Requirement BAT-5 wants the reading to change
+		// as the level falls, which means the *percentage* has to move — so the test works where the
+		// percentage is not saturated.
+		const { watch } = controller();
+		watch.setBattery(0.5);
+		assert.equal(watch.batteryPercent(), 50);
+
+		// Half the cell is 21 001.875 seconds of operation, so a thousand seconds is about 2.4%.
+		watch.setBattery(0.5 - 1000 / CAPACITY_SECONDS);
+		assert.equal(watch.batteryPercent(), 48, 'a thousand seconds of use moves the reading');
+	});
+
+	it('charges the cell for exactly as long as an alarm sounded (BAT-2)', () => {
+		// The alarm fires in Timekeeping and sounds for its full ten seconds.
+		const store = memoryStore();
+		const clock = new TestClock();
+		clock.wall = Date.UTC(2026, 6, 15, 7, 29, 59);
+		const notifications: unknown[] = [];
+		const watch = new WatchController({
+			now: clock.now,
+			mono: clock.mono,
+			setTimer: clock.setTimer,
+			store,
+			notify: (alert) => notifications.push(alert),
+		});
+		// A daily alarm one minute away.
+		watch.setAlarms({ defs: [{ id: 1, hour: 7, minute: 30, mode: 'daily' }], signal: false });
+
+		const before = watch.getBattery();
+		watch.start();
+		clock.advance(2_000); // across the minute boundary, and a second into the alert
+		assert.equal(watch.getState().alert?.kind, 'alarm', 'the alarm should be sounding');
+
+		clock.advance(9_000); // the alert's own ten seconds elapse
+		assert.equal(watch.getState().alert, null, 'the alert should have stopped itself');
+		watch.stop();
+
+		const drained = before - watch.getBattery();
+		// Ten seconds of alarm, to within a tick of tolerance on either end.
+		const expected = 10 / CAPACITY_SECONDS;
+		assert.ok(
+			drained > 0,
+			'the alarm must charge the cell — this was the open half of BAT-2',
+		);
+		assert.ok(
+			Math.abs(drained - expected) / expected < 0.3,
+			`expected about ${expected} of the cell for ten seconds, measured ${drained}`,
+		);
+	});
+
+	it('charges less for an alarm silenced early (BAT-2, ALM-7)', () => {
+		// The whole reason the meter is measured rather than assumed: stopping the sound after three
+		// seconds must cost three seconds, not ten.
+		const store = memoryStore();
+		const clock = new TestClock();
+		clock.wall = Date.UTC(2026, 6, 15, 7, 29, 59);
+		const watch = new WatchController({ now: clock.now, mono: clock.mono, setTimer: clock.setTimer, store });
+		watch.setAlarms({ defs: [{ id: 1, hour: 7, minute: 30, mode: 'daily' }], signal: false });
+
+		const before = watch.getBattery();
+		watch.start();
+		clock.advance(2_000);
+		assert.equal(watch.getState().alert?.kind, 'alarm');
+
+		// Any button stops it (ALM-7). It stops inside `reduce`, so no tick ever sees the transition —
+		// which is why the charge is settled on the state change and not on a tick.
+		watch.down('light');
+		watch.up('light');
+		assert.equal(watch.getState().alert, null);
+
+		clock.advance(60_000); // well past when the full alert would have ended
+		watch.stop();
+
+		const drained = before - watch.getBattery();
+		const fullAlert = 10 / CAPACITY_SECONDS;
+		assert.ok(drained > 0, 'a silenced alarm still cost something');
+		assert.ok(
+			drained < fullAlert * 0.9,
+			`a silenced alarm must not cost the full ten seconds: ${drained} against ${fullAlert}`,
+		);
+	});
+
+	it('does not charge the cell for a test alarm (ALM-6)', () => {
+		// A test alarm is the operator exercising the alarm, not the alarm firing. Casio's rating
+		// assumption is about firings, so metering the test would make the model wrong in the one
+		// place a curious operator would notice.
+		const { watch, clock } = controller();
+		tap(watch, 'mode');
+		tap(watch, 'mode');
+		assert.equal(watch.faceState().mode, 'alarm');
+
+		const before = watch.getBattery();
+		pressHold(watch, clock, 'search', 3_100);
+		assert.equal(watch.getState().alert?.kind, 'test');
+		clock.advance(11_000);
+		watch.tick();
+
+		assert.equal(watch.getBattery(), before, 'the test alarm drained nothing');
+	});
+
+	it('persists the level and restores it (BAT-4)', () => {
+		const store = memoryStore();
+		const first = controller({ store });
+		first.watch.setBattery(0.42);
+		first.watch.save();
+
+		const second = controller({ store });
+		assert.ok(
+			Math.abs(second.watch.getBattery() - 0.42) < 0.0001,
+			`the level should have been restored, but reads ${second.watch.getBattery()}`,
+		);
+	});
+
+	it('resets from the context menu and persists the reset (BAT-6)', () => {
+		const store = memoryStore();
+		const { watch } = controller({ store });
+		watch.setBattery(0.05);
+		watch.resetBattery();
+		assert.equal(watch.getBattery(), 1);
+		assert.equal(watch.batteryPercent(), 100);
+
+		const restored = controller({ store });
+		assert.equal(restored.watch.getBattery(), 1, 'the reset was written');
+	});
+
+	it('never falls below an empty cell, however long it sounds', () => {
+		const { watch } = controller();
+		watch.setBattery(0);
+		// A decade of continuous sounding would be an absurd duty cycle; the model must floor rather
+		// than go negative, because a negative level would render as a nonsense percentage.
+		watch.setBattery(watch.getBattery() - 10 * CAPACITY_SECONDS);
+		assert.equal(watch.getBattery(), 0);
+		assert.equal(watch.batteryPercent(), 0);
+	});
+});
+
+describe('the host’s own controls (INT-7, LIT-3)', () => {
+	it('moves between the five screens through the real cycle (MOD-1)', () => {
+		const { watch } = controller();
+		for (const mode of ['worldtime', 'alarm', 'timer', 'stopwatch', 'timekeeping'] as const) {
+			watch.setMode(mode);
+			assert.equal(watch.faceState().mode, mode, `should have reached ${mode}`);
+		}
+	});
+
+	it('applies the departure rules when it jumps a mode (SW-7)', () => {
+		// The reason `setMode` steps rather than assigning: leaving the stopwatch has to clear a
+		// frozen split, and a direct assignment of `mode` would skip that entirely.
+		const { watch, clock } = controller();
+		watch.setMode('stopwatch');
+		tap(watch, 'search');
+		clock.advance(500);
+		watch.tick();
+		tap(watch, 'adjust');
+		assert.equal(watch.getState().stopwatch.splitMs, 500, 'a split is frozen');
+
+		watch.setMode('timekeeping');
+		assert.equal(watch.getState().stopwatch.splitMs, null, 'the split was cleared on the way out');
+		assert.notEqual(watch.getState().stopwatch.startedAt, null, 'and it is still running');
+	});
+
+	it('accepts the two illumination durations and no others (LIT-2)', () => {
+		const { watch } = controller();
+		assert.equal(watch.getIlluminationMs(), 1500, 'the watch default');
+
+		watch.setIlluminationMs(3000);
+		assert.equal(watch.getIlluminationMs(), 3000);
+
+		// A stored third value is a duration the watch cannot show, so it falls back rather than
+		// being honoured. LIT-2 names exactly 1.5 s and 3 s.
+		watch.setIlluminationMs(999);
+		assert.equal(watch.getIlluminationMs(), 1500);
+	});
+
+	it('persists the illumination duration (LIT-3)', () => {
+		const store = memoryStore();
+		const first = controller({ store });
+		first.watch.setIlluminationMs(3000);
+
+		const second = controller({ store });
+		assert.equal(second.watch.getIlluminationMs(), 3000);
+	});
+
+	it('uses the chosen duration for the backlight (LIT-1, LIT-2)', () => {
+		// The setting has to *do* something, or it is a number in a file. At 3 s the wash is still lit
+		// where the 1.5 s default would have gone out.
+		const { watch, clock } = controller();
+		watch.setIlluminationMs(3000);
+		watch.down('light');
+		watch.up('light');
+		watch.start();
+
+		clock.advance(2_000);
+		assert.equal(watch.faceState().illuminated, true, 'still lit at two seconds');
+
+		clock.advance(1_500);
+		assert.equal(watch.faceState().illuminated, false, 'and out by three and a half');
+	});
+
+	it('handles the context menu actions it owns and defers the ones it does not (INT-7)', () => {
+		const { watch } = controller();
+		assert.equal(watch.faceState().mode, 'timekeeping');
+
+		watch.contextAction('mode');
+		assert.equal(watch.faceState().mode, 'worldtime', 'mode switching is the controller’s');
+
+		watch.setBattery(0.1);
+		watch.contextAction('battery-reset');
+		assert.equal(watch.getBattery(), 1, 'so is resetting the battery');
+
+		// `settings` and `quit` belong to the window. A headless component asked to quit must not
+		// throw, and must not pretend to have done it — it returns and reports nothing.
+		assert.doesNotThrow(() => watch.contextAction('settings'));
+		assert.doesNotThrow(() => watch.contextAction('quit'));
+		assert.equal(watch.faceState().mode, 'worldtime', 'and neither changed the watch');
 	});
 });
 

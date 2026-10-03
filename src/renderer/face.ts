@@ -293,7 +293,6 @@ function renderIndicators(state: DisplayState): string {
 	const cell = TEXT_SIZE.indicator;
 	const tracking = TRACKING.indicator;
 	const parts: string[] = [];
-
 	// MUTE. The word itself is printed on the case bezel rather than the LCD, because the LCD's
 	// indicator column has no room for four characters; the triangular icon alone marks the state,
 	// which is what the real panel does.
@@ -345,11 +344,22 @@ function renderIndicators(state: DisplayState): string {
 	// city code for about a second after the register changes, then reverts to the code. Rendering
 	// it as a separate corner label would overlap the subdial, so it replaces the code instead.
 	//
-	// It is anchored to the left of the code column rather than on it, so that it stays clear of the
-	// SIG/ALM indicator column on the right.
+	// It is **right-aligned** into the clearance before the code column, not placed at a fixed offset
+	// from it. The offset used to be `codeField.x - 46`, which was correct until the code field moved
+	// and the date field grew: the indicator then landed on the code it was meant to replace, which
+	// the rendered face showed and no test caught — the two runs did not *overlap*, they interleaved
+	// into `T-2TYO`. Deriving the position from the field's own width means a layout change cannot
+	// strand it again.
 	if (state.showRegister) {
+		const label = `T-${state.multiTime}`;
 		parts.push(
-			textRun(`T-${state.multiTime}`, codeField.x - 46, codeField.y, TEXT_SIZE.field, TRACKING.field),
+			textRun(
+				label,
+				registerIndicatorX(label),
+				codeField.y,
+				TEXT_SIZE.field,
+				TRACKING.field,
+			),
 		);
 	}
 
@@ -483,18 +493,62 @@ function fieldsTimekeeping(state: DisplayState): string[] {
  *
  * The date row carries the city **name** rather than the weekday, because on this screen knowing
  * *where* matters more than knowing which day of the week it is, and because the name is the only
- * long string the face ever shows. It is truncated to the width the row actually has, computed from
- * the glyph metrics rather than guessed, and the full name is always recoverable from the
- * catalogue.
+ * long string the face ever shows.
+ *
+ * ## The name is shown whole or not at all
+ *
+ * The row runs from x 76 to the code field, about 210 units — six glyphs at the field cell. Eleven of
+ * the catalogue's names fit and thirty-eight do not, so the rule for the ones that do not matters more
+ * than it looks.
+ *
+ * **Truncation is not the rule, because a truncated name is a wrong name.** Cutting to fit produced
+ * `NEW YOR` for New York, `FERNANDO D` for Fernando de Noronha, and `RIO DE J` for Rio — none of which
+ * is a place, and the last of which reads as a different city entirely. A floor on the length does not
+ * fix it either: `FERNANDO D` is ten glyphs and still nonsense.
+ *
+ * So a name that does not fit exactly is replaced by the **city code**, which is three glyphs, is
+ * unambiguous by construction, and already exists for every city the watch knows. `RIO` says more
+ * than `RIO DE J` does, and says nothing false. The name's full form is always available from the
+ * catalogue, and the code is what the device itself would print.
  */
 function fieldsWorldTime(state: DisplayState): string[] {
 	const { dateField, codeField, dayMarker } = FACE;
 	const parts: string[] = [];
 
-	const name = fitText(state.worldCity.toUpperCase(), dateField.x, codeField.x - 8, TEXT_SIZE.field, TRACKING.field);
-	parts.push(textRun(name, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
+	// The clearance before the code field is 14 units rather than the 8 the other gaps use, because
+	// these two runs are both field-glyph text on the same line and at 8 the name and the code read as
+	// one string — the same "non-overlap is not clearance" lesson the `ALM`/`TYO` collision taught.
+	//
+	// The fit accounts for the register indicator when it is showing. `NEW YORK` needs 153 units, the
+	// indicator 56 and the clearances 26, against 210 available — so the three do not fit, and the
+	// first version of this put `T-2` straight through `YORK`. Rather than choose whose information to
+	// drop, the *name* yields: it is the elastic one, and a name that cannot fit whole steps down to
+	// the code.
+	//
+	// **The name is shown whole or replaced — never truncated.** `fitText` is not used here, because
+	// cutting `LOS ANGELES` to the reduced room produced `LOS ANGELE`, which is not a place. That is
+	// the same mistake the wider row made with `FERNANDO D`, in a narrower space.
+	const name = state.worldCity.toUpperCase();
+	const room = registerReserve(state) - dateField.x;
+	const label =
+		textWidth(name, TEXT_SIZE.field, TRACKING.field) <= room
+			? name
+			: textWidth(state.cityCode, TEXT_SIZE.field, TRACKING.field) <= room
+				? state.cityCode
+				: // A code is three glyphs and the room is at least five, so this arm is unreachable in
+					// practice; it exists so the function cannot produce a one-glyph string if a future
+					// layout shrinks the row that far.
+					fitText(state.cityCode, dateField.x, registerReserve(state), TEXT_SIZE.field, TRACKING.field);
+	parts.push(textRun(label, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
 
-	// The code, unless the register indicator is showing in its place.
+	// The code, unless the register indicator is showing **in its place** (MOD-3).
+	//
+	// The two are alternatives rather than companions, and that is a measurement rather than a
+	// preference: the name row needs 152 units for `NEW YORK`, the indicator 56, and the code 56, and
+	// with the clearances each demands the three come to 336 of the 319 units available. Something has
+	// to give, and the code is the one element already implied by the name above it — whereas a
+	// suppressed name would leave the screen saying only `TYO`, which is where the time is from but
+	// not what the operator scrolled to.
 	if (!state.showRegister) {
 		parts.push(textRun(state.cityCode, codeField.x, codeField.y, TEXT_SIZE.field, TRACKING.field));
 	}
@@ -742,13 +796,44 @@ function pad(value: number): string {
 }
 
 /**
+ * The clearance between the register indicator and the city code field it sits beside.
+ *
+ * Fourteen units, matching the clearance the World Time name uses before the same field: both are
+ * field-glyph runs that would otherwise read as one string. See `fieldsWorldTime`.
+ */
+const REGISTER_GAP = 14;
+
+/**
+ * The x the `T-n` indicator starts at.
+ *
+ * Right-aligned into the clearance before the code column, so it stays clear of the code whatever its
+ * own width. Exported because the World Time name has to fit *around* it — see `registerReserve`.
+ */
+function registerIndicatorX(label: string): number {
+	return FACE.codeField.x - REGISTER_GAP - textWidth(label, TEXT_SIZE.field, TRACKING.field);
+}
+
+/**
+ * The x the World Time name may run up to, given what else is on its row.
+ *
+ * Normally the clearance before the code column. While the register indicator is showing, the
+ * indicator's own left edge — the name is what yields, because it is the elastic field.
+ */
+function registerReserve(state: DisplayState): number {
+	const indicators = state.showRegister
+		? registerIndicatorX(`T-${state.multiTime}`) - REGISTER_GAP
+		: FACE.codeField.x - REGISTER_GAP;
+	return Math.max(FACE.dateField.x, indicators);
+}
+
+/**
  * Truncates a string so it fits a width, measured with the glyph metrics.
  *
- * The World Time screen shows city *names*, which are the only strings of unpredictable length on
- * the face, so the fit is computed from `textWidth` rather than guessed. A name that does not fit is
- * cut rather than allowed to run into the field beside it, because an overlapping field is
- * unreadable whereas a truncated one is merely abbreviated — and a test asserts the result never
- * crosses the boundary.
+ * Kept because it is the general tool for "a string of unpredictable length in a fixed field", and it
+ * is tested. **It is deliberately not what the World Time name uses**: a truncated name is a wrong
+ * name — `FERNANDO D` is not a place — so that screen shows the city code instead. See
+ * `fieldsWorldTime` for the reasoning. Anywhere this *is* used, the result must read as an
+ * abbreviation rather than as a different word.
  */
 export function fitText(
 	text: string,

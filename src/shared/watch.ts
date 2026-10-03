@@ -1,10 +1,10 @@
 /**
- * The live watch: which zones are loaded, what the clock reads, and what the face is showing.
+ * The zone-and-clock derivation: which zone a screen is showing, and what its clock reads.
  *
  * This is the layer between the pure maths in `time.ts` / `catalog.ts` and the pure drawing in
- * `face.ts`. It holds mutable state and a clock, so it is deliberately headless — no DOM and no
- * Electron — which keeps it unit-testable and lets the same object drive the browser preview and
- * the widget.
+ * `face.ts`. It is a **pure function from settings to a snapshot** — no class, no timers, no
+ * persistence, no store. Everything that changes over time lives in `controller.ts`, which owns the
+ * screens, the alarms, the countdown, the stopwatch and the gestures.
  *
  * ## Why the offsets are cached on every sync
  *
@@ -12,18 +12,36 @@
  * the same offsets for the digits, the map band, the day marker and the DST label. They are computed
  * once per sync and stored, rather than recomputed by each consumer. That also means the face's
  * inputs are a snapshot that cannot disagree with itself halfway through a render.
+ *
+ * ## Why this is not `controller.faceState()`
+ *
+ * They overlap, and it is worth being precise about how. `syncWatch` answers "what does this zone
+ * read at this instant". `faceState` answers "what is on the panel right now", which adds the screen,
+ * the alarms, the countdown, the stopwatch and the interaction state. The controller builds the
+ * second without the first, because it needs the displayed zone to be a *screen-dependent* choice —
+ * the Home City in Alarm, Timer and Stopwatch, requirement MAP-4 — and `syncWatch` takes the
+ * register as given.
+ *
+ * So this function's callers are the renderer's static preview and the tests that check the
+ * derivation on its own. It is retained rather than folded into the controller because it is the
+ * simplest statement of the offset rules, and it is what the map band's placement is verified
+ * against. The class and the config reader that used to live here are gone: the controller owns
+ * persistence, and having two owners of "the live watch" is how the zone-validation bug below got in.
+ *
+ * **What that removal cost, recorded so it is not repeated.** The class here validated every stored
+ * zone before using it. The controller did not, and an unrecognised zone reaches `offsetMinutes`,
+ * which throws — so a hand-edited config file killed `faceState()` and `tick()` on every frame. The
+ * check is now in `controller.ts` as `resolveZone`, with a test. Deleting the old reader safely
+ * required reading what it had accepted, not just what it had exported.
  */
 import { cityForZone, lcdCodeForZone } from './catalog.ts';
 import {
-	DST_MODES,
-	civilDayDiff,
 	type Clock,
 	type DstMode,
+	civilDayDiff,
 	dstLabel,
 	effectiveOffset,
 	localZone,
-	offsetMinutes,
-	wallClock,
 } from './time.ts';
 
 /** A zone register: the Home City is `T-1`, and `T-2`…`T-4` are the Local Times. */
@@ -41,7 +59,7 @@ export interface WatchSettings {
 	readonly selected: number;
 }
 
-/** Everything the face needs, plus what the widget needs to persist. */
+/** Everything `syncWatch` derives from the settings and an instant. */
 export interface WatchState {
 	readonly settings: WatchSettings;
 	/** The instant the last sync used. */
@@ -72,17 +90,6 @@ export interface WatchState {
 	readonly pm: boolean;
 }
 
-/**
- * Minimal persistence seam.
- *
- * Deliberately not `localStorage` directly: the widget will use a config file in the Electron main
- * process, and tests need neither. A one-method interface is enough for both.
- */
-export interface WatchStore {
-	load(): string | null;
-	save(value: string): void;
-}
-
 /** Settings that match the watch out of the box: Home City plus three locals, all DST off. */
 export function defaultSettings(zone = localZone()): WatchSettings {
 	const home = zone;
@@ -107,7 +114,7 @@ function wallFor(slot: Slot, at: Date): { offset: number; wall: Date } {
 /** Derives the face's inputs from the settings at a given instant. */
 export function syncWatch(settings: WatchSettings, at: Date): WatchState {
 	const home = settings.slots[0] ?? { zone: localZone(), dst: 'off' as DstMode };
-	const index = Math.min(Math.max(settings.selected, 1), settings.slots.length) - 1;
+	const index = Math.min(Math.max(settings.selected, 1), Math.max(1, settings.slots.length)) - 1;
 	const slot = settings.slots[index] ?? home;
 
 	const displayed = wallFor(slot, at);
@@ -142,223 +149,5 @@ export function syncWatch(settings: WatchSettings, at: Date): WatchState {
 	};
 }
 
-const CONFIG_VERSION = 1;
-
-interface StoredConfig {
-	version: number;
-	clock: Clock;
-	selected: number;
-	slots: { zone: string; dst: DstMode }[];
-}
-
-/**
- * Validates and repairs a stored configuration.
- *
- * A corrupt or partial file must never stop the clock: every field falls back to its default, and
- * unknown zones are replaced rather than trusted. See requirement PRS-4.
- */
-export function parseSettings(raw: string | null): WatchSettings {
-	const fallback = defaultSettings();
-	if (!raw) {
-		return fallback;
-	}
-
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		return fallback;
-	}
-
-	if (typeof parsed !== 'object' || parsed === null) {
-		return fallback;
-	}
-
-	const config = parsed as Partial<StoredConfig>;
-	const slots: Slot[] = [];
-
-	if (Array.isArray(config.slots)) {
-		for (const entry of config.slots.slice(0, 4)) {
-			if (typeof entry !== 'object' || entry === null) {
-				continue;
-			}
-			const candidate = entry as { zone?: unknown; dst?: unknown };
-			const zone = typeof candidate.zone === 'string' ? normaliseZone(candidate.zone) : undefined;
-			if (!zone) {
-				continue;
-			}
-			slots.push({ zone, dst: isDstMode(candidate.dst) ? candidate.dst : 'off' });
-		}
-	}
-
-	// A register set without a Home City is meaningless, so fall back wholesale.
-	if (slots.length < 4) {
-		return fallback;
-	}
-
-	const clock = config.clock === '12h' || config.clock === '24h' ? config.clock : fallback.clock;
-	const selected =
-		typeof config.selected === 'number' && config.selected >= 1 && config.selected <= 4
-			? Math.floor(config.selected)
-			: fallback.selected;
-
-	return { slots: slots as [Slot, Slot, Slot, Slot], clock, selected };
-}
-
-function isDstMode(value: unknown): value is DstMode {
-	return value === 'auto' || value === 'on' || value === 'off';
-}
-
-/** Resolves a stored zone, accepting ICU's legacy spellings. */
-function normaliseZone(zone: string): string | undefined {
-	const city = cityForZone(zone);
-	if (city) {
-		return city.zone;
-	}
-	// An arbitrary IANA zone that is not in the catalogue is still legitimate.
-	return offsetMinutesSafe(zone) ? zone : undefined;
-}
-
-function offsetMinutesSafe(zone: string): boolean {
-	try {
-		offsetMinutes(zone, new Date());
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-/** Serialises settings for persistence. */
-export function serialiseSettings(settings: WatchSettings): string {
-	const config: StoredConfig = {
-		version: CONFIG_VERSION,
-		clock: settings.clock,
-		selected: settings.selected,
-		slots: settings.slots.map((slot) => ({ zone: slot.zone, dst: slot.dst })),
-	};
-	return JSON.stringify(config);
-}
-
-/**
- * Ticks once a second and notifies subscribers.
- *
- * The interval only wakes to re-derive the state; it does not accumulate elapsed time, so a
- * suspended or throttled timer cannot make the clock drift (requirement PRS-5). The current instant
- * is read fresh on every tick.
- */
-export class Watch {
-	private settings: WatchSettings;
-	private state: WatchState;
-	private timer: ReturnType<typeof setInterval> | null = null;
-	private readonly listeners = new Set<(state: WatchState) => void>();
-	private readonly store: WatchStore | undefined;
-	private readonly now: () => Date;
-
-	/**
-	 * Constructor properties are written out longhand rather than as TypeScript parameter
-	 * properties: `erasableSyntaxOnly` forbids the shorthand because it emits code, which is
-	 * incompatible with Node's type stripping that lets the tests run without a build step.
-	 */
-	constructor(settings: WatchSettings, store?: WatchStore, now?: () => Date) {
-		this.settings = settings;
-		this.store = store;
-		this.now = now ?? (() => new Date());
-		this.state = syncWatch(settings, this.now());
-	}
-
-	/** Restores settings from the store, if one was supplied. */
-	static restore(store: WatchStore, now?: () => Date): Watch {
-		return new Watch(parseSettings(store.load()), store, now);
-	}
-
-	getState(): WatchState {
-		return this.state;
-	}
-
-	subscribe(listener: (state: WatchState) => void): () => void {
-		this.listeners.add(listener);
-		listener(this.state);
-		return () => this.listeners.delete(listener);
-	}
-
-	/** True while the interval is running. */
-	get running(): boolean {
-		return this.timer !== null;
-	}
-
-	start(): void {
-		if (this.timer !== null) {
-			return;
-		}
-		this.tick();
-		this.timer = setInterval(() => this.tick(), 1000);
-	}
-
-	stop(): void {
-		if (this.timer !== null) {
-			clearInterval(this.timer);
-			this.timer = null;
-		}
-	}
-
-	/** Re-derives the state from the current instant. */
-	tick(): void {
-		this.state = syncWatch(this.settings, this.now());
-		for (const listener of this.listeners) {
-			listener(this.state);
-		}
-	}
-
-	/** Selects a Multi Time register, 1..4. */
-	selectRegister(index: number): void {
-		if (index < 1 || index > this.settings.slots.length || index === this.settings.selected) {
-			return;
-		}
-		this.update({ ...this.settings, selected: index });
-	}
-
-	/** Moves to the next Multi Time register, wrapping, as the watch's SEARCH press does. */
-	nextRegister(): void {
-		const next = (this.settings.selected % this.settings.slots.length) + 1;
-		this.update({ ...this.settings, selected: next });
-	}
-
-	/** Sets the zone of a register. Selecting T-1 changes the Home City. */
-	setZone(index: number, zone: string): void {
-		const resolved = normaliseZone(zone);
-		const slot = this.settings.slots[index - 1];
-		if (!resolved || !slot) {
-			return;
-		}
-		const slots = this.settings.slots.map((current, position) =>
-			position === index - 1 ? { zone: resolved, dst: current.dst } : current,
-		);
-		this.update({ ...this.settings, slots });
-	}
-
-	/** Cycles a register's DST override through auto -> on -> off, the documented extension. */
-	cycleDst(index: number): void {
-		const slot = this.settings.slots[index - 1];
-		if (!slot) {
-			return;
-		}
-		const next = DST_MODES[(DST_MODES.indexOf(slot.dst) + 1) % DST_MODES.length] ?? 'off';
-		const slots = this.settings.slots.map((current, position) =>
-			position === index - 1 ? { zone: current.zone, dst: next } : current,
-		);
-		this.update({ ...this.settings, slots });
-	}
-
-	/** Toggles 12- and 24-hour presentation. */
-	toggleClock(): void {
-		this.update({ ...this.settings, clock: this.settings.clock === '24h' ? '12h' : '24h' });
-	}
-
-	private update(settings: WatchSettings): void {
-		this.settings = settings;
-		this.tick();
-		if (this.store) {
-			this.store.save(serialiseSettings(settings));
-		}
-	}
-}
+/** The catalogue's entry for a zone, re-exported for callers that need the city behind a code. */
+export { cityForZone };

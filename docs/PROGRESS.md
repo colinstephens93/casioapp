@@ -3,36 +3,33 @@
 A chronological record of what has been built, what was learned, and what is verified. Written for
 someone picking this up cold. For *how to work on it*, see [HANDOFF.md](HANDOFF.md).
 
-Last updated: after M7 (all five screens, every pusher gesture, Auto Display, MUTE).
+Last updated: after the M8 pass (battery model, context menu, and two config-repair bugs).
 
 ## At a glance
 
 | Metric | Value |
 |---|---|
-| Tests | **358 passing**, 0 failing, across 78 suites and 12 files |
+| Tests | **361 passing**, 0 failing, across 78 suites and 12 files |
 | Typecheck | Clean on all four `tsconfig` files, including the Electron main process |
 | Build | Clean, single pass, and self-verifying (`npm run build` includes preview verification) |
 | Screens | All five (Timekeeping, World Time, Alarm, Timer, Stopwatch) plus six setting screens |
 | Can it run? | **No** — see [ENVIRONMENT.md](ENVIRONMENT.md). Its *drawing* can be rendered and inspected. |
-| Git | Three commits (`requirements`, `grill me skill`, `Add the initial project note`). **All of M0–M7 is uncommitted.** |
-
-> **Uncommitted work.** Everything described below exists only in the working tree. If this matters,
-> commit it before starting new work — a lost working tree would take the whole project with it.
+| Git | Committed through M7 (`Continued development`); the M8 work above is uncommitted. |
 
 ### Test breakdown
 
 | File | Tests | Covers |
 |---|---|---|
 | `test/time.test.ts` | 35 | Offsets, wall clock, ±1 day marker, DST, formatting, zone validation |
-| `test/watch.test.ts` | 31 | Live state, registers, persistence, repair, controller |
-| `test/face.test.ts` | 34 | Face composition, layout bounds, glyph overlap, glyph overflow, conditionals |
+| `test/watch.test.ts` | 10 | The zone-and-clock derivation: offsets, gap, day marker, DST label move together |
+| `test/face.test.ts` | 45 | Face composition, layout bounds, glyph overlap, glyph overflow, name fitting |
 | `test/map.test.ts` | 28 | Land bitset, band placement, Home City fallback, fitting |
 | `test/machine.test.ts` | 69 | Every pusher on every screen: press, hold and chord; the five screens' rules |
 | `test/alarms.test.ts` | 18 | The five alarms, the crossing test, the midnight and DST cases, repair |
 | `test/timer.test.ts` | 23 | The countdown against an injected clock, pause/resume, rollover, persistence |
 | `test/stopwatch.test.ts` | 18 | The three behaviours, the 24-hour rollover, formatting |
 | `test/gestures.test.ts` | 25 | Press, hold at each real duration, chord, repeat cadence |
-| `test/controller.test.ts` | 31 | Cadence, the seconds reset, restart, notifications, the backlight, persistence |
+| `test/controller.test.ts` | 62 | Cadence, the battery model, the seconds reset, restart, notifications, the host's controls |
 | `test/catalog.test.ts` | 19 | The watch's 49-code table, extended zones, sorting and exclusion |
 | `test/glyphs.test.ts` | 18 | Glyph coverage, digit uniqueness, collision audit |
 
@@ -234,8 +231,70 @@ rows' cell heights are fixed by the text sizes, and working up from the LCD's fo
 stopwatch or countdown, 500 ms for the scrolling screens. Ticking everything at the fastest rate would
 work and would burn twenty times the CPU to redraw the same picture.
 
-## A recurring failure worth recording
+### The M8 pass — the battery, and two bugs the cleanup found
 
+Four things, in the order they mattered.
+
+**1. The battery now charges for alarm sound, which was the open half of BAT-2.** The seam was one
+line; the work was the meter. The controller records the instant an alert appears and charges for the
+real elapsed time when it goes away, so an alarm silenced after three seconds costs three seconds and
+not ten. A test alarm is exempt, because it is the operator exercising the alarm rather than the alarm
+firing, and Casio's rating is about firings.
+
+**The first version of the meter measured zero, always.** `settleAlert` re-armed itself on every call,
+and there are two calls per tick — `dispatch` and `tick` both end in `afterReduce`. So the elapsed time
+was always zero and the battery never moved. No error, no exception, a green suite: the only symptom
+was a number that stayed at 1. It now recognises an alert it has already seen, keyed on kind plus end
+instant, which is the identity the notification deduplication already uses.
+
+The model is calibrated to Casio's own stated assumption and the test derives that figure
+independently rather than importing it: 10 s of alarm plus 1.5 s of light per day, 3652.5 days per
+decade, 42 003.75 seconds of operation for the whole cell.
+
+**2. Two bugs in the config reader, both found by auditing what the *deleted* code had been doing.**
+
+- **An unrecognised zone in the config file crashed the widget on every frame.** `watch.ts` validated
+  stored zones; `controller.ts` did not. An invalid zone reaches `offsetMinutes`, which throws — and it
+  throws inside both `faceState()` and `tick()`, so the widget died on startup and again on every tick,
+  on exactly the input requirement PRS-4 singles out. The check is now `resolveZone` in the controller,
+  with a test that asserts neither call throws.
+- **The register was silently reset to T-1.** M0–M4 wrote `selected`; M5 renamed the field to
+  `register`. The new reader looked only for the new name, so every existing widget's register reverted
+  to T-1 on the next restart. A data regression rather than a crash, and therefore the kind that
+  survives a green suite until it is asserted.
+
+Neither was found by a test. Both were found by reading what the old code accepted before deleting it,
+which is the lesson: **the risk in deleting a module is the validation it was doing, not the features
+it was providing.**
+
+**3. `watch.ts` is now a pure function, not a second owner of the watch.** The `Watch` class, its
+config reader and its writer had no caller outside their own test — `controller.ts` had superseded all
+of it, and nothing had removed it. The file is now `syncWatch` and its types: a pure settings-to-
+snapshot derivation, which is the simplest statement of the offset rules and what the map band is
+verified against. The class, `parseSettings`, `serialiseSettings` and `WatchStore` are gone, and
+`watch.test.ts` was rewritten around the derivation. Having two owners of "the live watch" is how the
+two bugs above got in.
+
+**4. The context menu and the illumination setting are reachable.** `contextAction` handles the two
+actions the controller owns (`mode`, `battery-reset`) and returns quietly for the two the window owns
+(`settings`, `quit`) rather than pretending. `setMode` steps through the real cycle instead of
+assigning the mode, so the departure rules still apply — leaving the stopwatch clears a frozen split.
+Both are exercised in the preview, where the case can be right-clicked.
+
+**The World Time name rule was wrong, and the picture caught it.** The name was truncated to fit, which
+turned `RIO DE JANEIRO` into `RIO DE J` and `FERNANDO DE NORONHA` into `FERNANDO D` — neither of which
+is a place. A floor on the length did not help, because `FERNANDO D` is ten glyphs and still nonsense.
+The rule is now: **show the name whole, or show the city code.** Eleven of the catalogue's names fit
+and thirty-eight do not, and `RIO` says more than `RIO DE J` does and says nothing false.
+
+That change exposed a second defect the rendered face had been showing all along: the `T-n` register
+indicator was placed at a fixed `codeField.x - 46`, which had been correct until the code field moved,
+and it was landing on the code it was meant to replace. The two runs did not *overlap* — they
+interleaved into `T-2TYO`, which is invisible to a pairwise overlap test. The indicator is now
+right-aligned by its own measured width, and the name yields to it, because the name is the elastic
+field.
+
+## A recurring failure worth recording
 Across M2 and M4 I repeatedly **asserted values from memory instead of computing them**, and every
 single one was wrong:
 
@@ -278,39 +337,60 @@ were mechanical rather than remembered.
 | **The hold durations are the watch's** | Asserted against named constants: 1 s, 2 s, 3 s, and no others |
 | **A chord is one gesture** | No hold fires while both pushers are down, and the chord is emitted exactly once |
 | **CPU is bounded per screen** | Per-screen cadence asserted, including that an idle clock is not ticked at the stopwatch's rate |
-| The preview actually works | Build-time verifier: inline script parses, modules resolve, controls exist |
+| **The battery model is calibrated** | The decade's arithmetic derived independently of the implementation; ten seconds of alarm charges 1/42003.75 of the cell |
+| **An alarm's cost matches how long it sounded** | A silenced alarm charges less than a full one, and a test alarm charges nothing |
+| **A bad config file cannot crash the widget** | An invalid zone asserted not to throw from `faceState()` or `tick()` |
+| **An older config file still loads** | The legacy `selected` field is read, so a rename did not reset every widget's register |
+| **Every catalogue name fits or steps down to its code** | All 49 cities rendered and their glyphs measured |
+| The preview actually works | Build-time verifier: inline script parses, modules resolve, every control id exists |
 
 ## What is *not* verified
 
 - **Colours.** Modelled from product photography; the research could not measure exact values.
 - **Segment proportions and stroke weight.** Authored by eye, never compared to the real watch.
 - **Anything needing a visible window:** dragging, tray, taskbar suppression, always-on-top, resize
-  behaviour, Windows notifications, the audible alarm. None of it can be exercised here.
+  behaviour, Windows notifications, the audible alarm, the tray menu's keyboard reach (NFR-9). None of
+  it can be exercised here.
 - **The rasteriser's own fidelity.** It is an inspection aid, not a source of truth, and it ignores the
   decimal point (emitted as an arc).
 - **The case proportions.** The window is 450 × 445 units where the real case is 450 × 421. It had to
   grow to hold the printed `10 YEAR BATTERY` line *below* the LCD rather than across it. This is a
   deviation from the device and it is visible to anyone who owns one — see "Known rough edges".
+- **The CPU budget in absolute terms.** What is asserted is the *wake rate*, which is the number the
+  controller controls. The cost of the redraw it triggers is not measured, and on a machine with a
+  compositor it is the larger term. NFR-4's "below half a percent" is therefore argued rather than
+  demonstrated.
 
 ## Known rough edges
 
 - **The case is 5.7% taller than the real watch**, for the reason above. The alternative was printing
   `10 YEAR BATTERY` across the main digits, which the rasterised face showed immediately.
+- **Thirty-eight of the catalogue's forty-nine city names do not fit the World Time row** and are
+  shown as their three-letter code instead. That is the honest rule (a truncated name is a wrong
+  name), but it means the screen shows names for the short-named cities and codes for the rest, which
+  is inconsistent to look at. Widening the row would mean giving up the code field or the register
+  indicator.
 - **The timer's sub-field row and the seconds share a line**, in separate columns. The columns are a
   compromise: moving the seconds right to close the gap with the main digits puts them through the
   stopwatch's sub-field, which the layout test caught when it was tried.
-- **The stopwatch's hundredths are small** (an 16-unit cell against the main digits' 26). Ten
-  glyphs do not fit one row of a 340-unit LCD at a readable size, and the real module makes the same
-  trade.
+- **The stopwatch's hundredths are small** (a 16-unit cell against the main digits' 26). Ten glyphs do
+  not fit one row of a 340-unit LCD at a readable size, and the real module makes the same trade.
 - `SIG` on the LCD is visually near the case's printed `SEARCH` label.
 - `royale` is still a placeholder product name and appears in packaging metadata.
 - Colours live in `THEME` in `theme.ts` for exactly this reason: a colour pass is one edit per token.
 
 ## The next session should start here
 
-M8 — battery, illumination, polish and packaging — plus the Electron shell (M1 and the M8 window
-work). Neither can be *verified* in this sandbox, which is why they are last, but the headless parts
-can be: the drain model has a calibration already written down in `controller.ts` (42 003.75 seconds
-of operation, from Casio's own 10 s + 1.5 s per day over ten years), and `drainAlertSeconds` is the
-seam waiting for the alert lifecycle to call it. Nothing currently charges the battery for alarm
-sound, which is the one open half of BAT-2.
+**M1 and the rest of M8 — the Electron shell.** Everything that can be verified without a window is
+now done: the battery model, the illumination duration, the context menu's controller half, and the
+per-screen cadence. What remains genuinely needs a desktop where `ELECTRON_RUN_AS_NODE` is not set:
+
+- M1: tray, taskbar and Alt+Tab suppression, always-on-top yielding to fullscreen, position and size
+  persistence, dragging, `-webkit-app-region: no-drag` on the pushers.
+- The shell half of M8: Windows notifications in the alarm category so Focus Assist is respected, the
+  amber wash *in situ*, `electron-builder` packaging, and the 15 acceptance criteria's window ones.
+- NFR-9's accessibility floor for the tray menu.
+
+`main.cts` and `preload.cts` are still the M0 scaffold: a frameless transparent window and a `ping`
+bridge. The `WatchController` is ready to drive the renderer, and its `ControllerDeps` seam already
+takes the `now`/`mono`/`setTimer` functions the real event loop supplies.

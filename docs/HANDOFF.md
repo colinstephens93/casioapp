@@ -21,7 +21,7 @@ npm run build            # compiles, bundles the preview, generates it, verifies
 Then:
 
 ```sh
-npm test                 # 358 tests, no build step needed
+npm test                 # 361 tests, no build step needed
 npm run typecheck        # four tsconfigs — run this, see §5
 ```
 
@@ -32,7 +32,8 @@ dist/preview/index.html
 ```
 
 Open it in a browser. Nineteen rendered faces plus live controls. No server needed. The *Live* card is
-driven by the real `WatchController`, and its pushers can be clicked and held.
+driven by the real `WatchController`, its pushers can be clicked and held, and right-clicking the case
+opens the context menu (INT-7).
 
 ## 2. What this project is
 
@@ -110,8 +111,8 @@ layout test fails, the layout is wrong — change the constants, not the test.**
 | `src/shared/stopwatch.ts` | The three behaviours, the 24-hour rollover | No lap memory, by requirement |
 | `src/shared/machine.ts` | **Every screen and sub-screen.** A pure reducer | What every pusher does, everywhere |
 | `src/shared/gestures.ts` | Press, hold and chord at the watch's durations | Injectable clock; no timers |
-| `src/shared/controller.ts` | **Everything with a clock in it** | The only object with timers, cadence and persistence |
-| `src/shared/watch.ts` | The M3/M4 live state and its persistence | Still used by the map band tests; `controller.ts` supersedes it for the widget |
+| `src/shared/controller.ts` | **Everything with a clock in it** | The only object with timers, cadence, persistence and the battery |
+| `src/shared/watch.ts` | The pure zone-and-clock derivation | `syncWatch` only: settings plus an instant to a snapshot. It is not a second owner of the watch — see §5 |
 | `src/renderer/face.ts` | **The single layout authority.** Case, LCD, all fields | Pure; no DOM |
 | `src/renderer/preview.ts` | The standalone preview page and its inline script | The inline script is a template string — see §5 |
 
@@ -206,6 +207,41 @@ ascending — `ATH` follows `STO` at the same offset — so scrolling westward f
 wrap past the whole table. The sort is stable, so cities sharing an offset keep the manual's relative
 order. Do not replace it with the array's own order.
 
+### One owner per concept
+
+`controller.ts` owns persistence, the clock and the battery; `watch.ts` owns the pure derivation;
+`machine.ts` owns what a button means; `face.ts` owns the layout. **When two modules own one concept,
+the loser's validation disappears silently.** That is not a theory: `watch.ts` used to read the config
+file as well as deriving from it, and when the controller took persistence over, the zone validation
+did not move with it. An invalid zone then reached `offsetMinutes`, which throws — killing both
+`faceState()` and `tick()`, on the exact input PRS-4 says must fall back.
+
+Before deleting a module, read what it *accepts*, not just what it exports.
+
+### A truncated name is a wrong name
+
+The World Time row is 210 units and shows a city name whole or the city's three-letter code, never a
+cut-down string. `RIO DE J` and `FERNANDO D` are not places, and a floor on the length does not help
+because `FERNANDO D` is ten glyphs and still nonsense. `fitText` still exists for cases where an
+abbreviation reads as an abbreviation; this row is not one of them.
+
+The name also yields to the `T-n` register indicator when it is showing, because the name is the
+elastic field and the indicator is not — and because the three runs together (name, indicator, code)
+need 336 units of the 319 available.
+
+### Run the renderer, not just the tests
+
+Four defects in this project were invisible to every test and obvious in the image:
+
+1. `text-anchor="center"`, which is not a value — the bezel text was silently left-aligned.
+2. The subdial drawn over the date field, so `THU` rendered as `EHU`.
+3. The stopwatch's digits running onto the case — no two glyphs *overlapped*, so the pairwise test
+   passed.
+4. `10 YEAR BATTERY` and `ILLUMINATOR` printed across the live digits — print over a glyph is not a
+   glyph over a glyph, and no geometry test can see it.
+
+The rasteriser costs a minute and catches a class of bug the suite structurally cannot.
+
 
 
 In every mode, whatever city is displayed (requirement ANA-2). Its ring is numbered **5…60**, not
@@ -235,56 +271,21 @@ obvious in the image — including one class (case print over a live field) that
 
 ## 7. What is next
 
-### Immediate: M8 — battery, illumination, polish and packaging
+### Immediate: M1 and the rest of M8 — the Electron shell
 
-M0–M7 are complete: the whole verifiable core, all five screens, and every pusher gesture. What remains
-splits cleanly into work that can be verified here and work that cannot.
+Everything verifiable without a window is done. What remains needs a real desktop, where
+`ELECTRON_RUN_AS_NODE` is not set:
 
-**Verifiable here:**
-
-- The battery drain model. The calibration is already written down — Casio's own 10 s of alarm plus
-  1.5 s of illumination per day over ten years is 42 003.75 seconds of operation, which is what
-  `controller.ts` divides by. `drainAlertSeconds` is the seam; nothing calls it yet, and **that is the
-  one open half of BAT-2**: alarm sound is not currently charged to the cell. It wants a test with
-  injected usage asserting the ten-year figure.
-- The illumination duration's persistence and its effect on the readout (LIT-3, BAT-5).
-- The context menu's actions, as controller methods (`resetBattery` exists; mode switch, settings and
-  quit do not).
-
-**Not verifiable here — needs a human at a desktop:**
-
-- M1: tray, taskbar suppression, always-on-top yielding to fullscreen, position persistence, dragging.
-- M8: the amber wash *in situ*, Windows notifications actually appearing and respecting Focus Assist,
-  `electron-builder` packaging, the installed app's acceptance run.
-- The 15 acceptance criteria in REQUIREMENTS.md §7. Several are already demonstrable from the preview;
-  the window ones are not.
-
-### Then: the three things that need a human, not an agent
-
-Unchanged, and still the fastest route to a better-looking widget — open `dist/preview/index.html` and
-compare it against the real watch:
-
-1. **Colours.** Named tokens in `THEME`, one edit each.
-2. **Segment proportions and stroke weight.** Authored by eye.
-3. **The case proportions.** Now 450 × 445 units rather than the device's 450 × 421, for the reason
-   recorded in RESEARCH.md §6. The product name `royale` is also still a placeholder.
-
-- **M5 — World Time** (`WLD-*`): city scrolling eastward with fast scroll on hold, the home↔world swap
-  (ADJUST+LIGHT), second synchronisation with Timekeeping, and the last-viewed city on re-entry. Mode
-  cycling is `MOD-*`.
-- **M6 — Alarm, Timer, Stopwatch** (`ALM-*`, `TMR-*`, `SW-*`): five alarms as Daily/One-time/Off plus
-  the hourly signal, the 10-second alarm behaviour, the countdown's absolute-end-time persistence, and
-  the stopwatch's three behaviours. The timer and stopwatch logic should be tested **against injected
-  clocks**.
-- **M7 — Pusher gestures** (`INT-*`): press, hold and chords with the watch's real durations (~1 s,
-  ~2 s, ~3 s), flashing setting fields, Auto Display, auto-return after 2–3 minutes idle, and MUTE.
-
-### Later: M1 and M8 — the Electron shell
-
-Window citizenship (tray, no taskbar entry, always-on-top that yields to fullscreen, position
-persistence), Windows notifications in the alarm category so Focus Assist is respected, the battery
-simulation, the amber backlight, and packaging. **None of this can be verified in the sandbox** — it
-needs a real desktop, where `ELECTRON_RUN_AS_NODE` is not set.
+- **M1 — window citizenship.** Tray with Show/Hide, Quit and a "reset position" action; no taskbar
+  entry and no Alt+Tab presence; always-on-top that yields to a fullscreen application; position and
+  size persistence with a restored position clamped into the visible work area; dragging by the case,
+  with `-webkit-app-region: no-drag` on every pusher or they will be swallowed (plan risk R-2).
+- **M8's shell half.** Windows notifications registered in the alarm category so Focus Assist is
+  respected — `ControllerDeps.notify` is the seam and is already called once per firing; the amber wash
+  *in situ*; packaging with `electron-builder`; NFR-9's keyboard-reachable tray menu.
+- `main.cts` and `preload.cts` are still the M0 scaffold: a frameless transparent window and a `ping`
+  bridge. `WatchController` is ready to drive the renderer, and its `ControllerDeps` already takes the
+  `now` / `mono` / `setTimer` functions the real event loop supplies.
 
 ### Needs a human, not an agent
 
@@ -292,18 +293,21 @@ needs a real desktop, where `ELECTRON_RUN_AS_NODE` is not set.
    `THEME` in `theme.ts` so a pass is one edit each.
 2. **Segment proportions and stroke weight.** Authored by eye, never compared to the real watch.
 3. **The case proportions**, now 450 × 445 rather than the device's 450 × 421. See RESEARCH.md §6.
-4. **The product name.** `royale` is a placeholder and appears in packaging metadata.
+4. **The World Time name rule.** Thirty-eight of the forty-nine names do not fit the row and are shown
+   as codes. The alternative is a wider row, which costs the code field or the register indicator — a
+   design call, not an engineering one.
+5. **The product name.** `royale` is a placeholder and appears in packaging metadata.
 
 Open `dist/preview/index.html` and compare it against the real watch. That is the fastest route to
-correcting all four.
+correcting all five.
 
 ## 8. Repository state
 
-Three commits on `main`: `requirements`, `grill me skill`, `Add the initial project note`.
+Four commits on `main`, the most recent being `Continued development` (M0–M7).
 
-**All of M0–M7 is uncommitted.** Everything described in this document and
-[PROGRESS.md](PROGRESS.md) exists only in the working tree. If that matters — and it should — commit
-before starting new work.
+**The M8 pass is uncommitted**: the battery model, the two config-repair fixes, the `watch.ts`
+consolidation, the context menu, the illumination setting, the World Time name rule, and the register
+indicator fix.
 
 ## 9. Working agreements established in this project
 

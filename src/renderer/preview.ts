@@ -12,7 +12,7 @@
  */
 import { renderFace, type DisplayState } from './face.ts';
 import { FACE_CSS } from './preview-css.ts';
-import { lcdCodeForZone } from '../shared/catalog.ts';
+import { cityForZone, lcdCodeForZone } from '../shared/catalog.ts';
 import { syncWatch, type WatchSettings } from '../shared/watch.ts';
 import type { Clock, DstMode } from '../shared/time.ts';
 import type { ScreenMode, FlashField } from '../shared/machine.ts';
@@ -134,7 +134,10 @@ export function stateFor(scenario: Scenario): DisplayState {
 		stopwatchSplit: scenario.stopwatchSplit ?? false,
 		stopwatchWrapped: scenario.stopwatchWrapped ?? false,
 
-		worldCity: lcdCodeForZone(scenario.zone),
+		// The city's *name*, not its code: the World Time screen's date row exists to say where the
+		// time is from, and the code already has its own field. An earlier version passed the code,
+		// which made the two fields redundant and hid the name-fitting logic from every scenario.
+		worldCity: cityForZone(scenario.zone)?.name ?? scenario.zone,
 		worldIsUtc: scenario.zone === 'Etc/UTC' || scenario.zone === 'UTC',
 
 		pressed: scenario.pressed ?? [],
@@ -460,12 +463,16 @@ export function renderPreview(now: Date): string {
 		<div class="buttons" id="register-buttons"></div>
 		<span class="control-label">Clock</span>
 		<button type="button" data-action="clock">12 / 24 hour</button>
+		<span class="control-label">Light</span>
+		<div class="buttons" id="light-buttons"></div>
 	</div>
 	<div class="control-row">
 		<span class="control-label">Zone</span>
 		<div class="buttons" id="zone-buttons"></div>
 	</div>
 	<p class="status" id="status"></p>
+	<p class="hint">Right-click the watch for the context menu the Electron shell will supply (INT-7).</p>
+	<div class="context-menu" id="context-menu"></div>
 </section>
 <script src="./bundle.js"></script>
 <script>${LIVE_SCRIPT}</script>
@@ -574,6 +581,29 @@ main {
 	font-family: ui-monospace, monospace;
 	font-size: 12px;
 }
+/* The context menu's stand-in: the Electron shell will pop a native one. Hidden until the case is
+   right-clicked, and positioned inline because the preview page has no popup layer. */
+.context-menu {
+	display: none;
+	gap: 6px;
+	margin-top: 10px;
+	padding: 10px;
+	background: #23271f;
+	border: 1px solid #3a4034;
+	border-radius: 8px;
+}
+.context-menu.open { display: flex; flex-wrap: wrap; }
+.context-menu button {
+	background: #2c3127;
+	color: #d8ded2;
+	border: 1px solid #4a5242;
+	border-radius: 6px;
+	padding: 5px 10px;
+	font: inherit;
+	font-size: 12.5px;
+	cursor: pointer;
+}
+.context-menu button:disabled { opacity: 0.45; cursor: default; }
 `;
 
 /**
@@ -735,11 +765,77 @@ const LIVE_SCRIPT = `
 			var button = document.createElement('button');
 			button.type = 'button';
 			button.textContent = mode;
-			button.addEventListener('click', function () {
-				while (watch.getState().mode !== mode) { tap('mode'); }
-			});
+			// Straight to the screen, through the controller's own cycle walk, so the departure rules
+			// apply (SW-7 clears a frozen split on the way out of the stopwatch) and the sub-screens
+			// survive the trip.
+			button.addEventListener('click', function () { watch.setMode(mode); });
 			box.appendChild(button);
 		});
+
+		var lightBox = document.getElementById('light-buttons');
+		if (lightBox) {
+			[1500, 3000].forEach(function (ms) {
+				var button = document.createElement('button');
+				button.type = 'button';
+				button.textContent = (ms / 1000).toFixed(1) + ' s light';
+				button.addEventListener('click', function () { watch.setIlluminationMs(ms); });
+				lightBox.appendChild(button);
+			});
+		}
+	}
+
+	/**
+	 * The context menu (requirement INT-7).
+	 *
+	 * A widget has no native menu of its own — the Electron shell will supply one through its own
+	 * popup call — so this is a stand-in that exercises the same four actions through the same
+	 * controller method. The two actions the controller does not own (settings, quit) are shown and
+	 * disabled rather than omitted, so the menu is complete and the boundary is visible.
+	 *
+	 * No backticks anywhere in this script: it is emitted inside a template literal, and one would end
+	 * the string and break the page. The build's verifier catches that, which is the point of it.
+	 */
+	function buildContextMenu() {
+		var menu = document.getElementById('context-menu');
+		if (!menu) { return; }
+
+		var actions = [
+			{ label: 'Switch mode', action: 'mode', owned: true },
+			{ label: 'Settings…', action: 'settings', owned: false },
+			{ label: 'Reset battery', action: 'battery-reset', owned: true },
+			{ label: 'Quit', action: 'quit', owned: false }
+		];
+
+		actions.forEach(function (entry) {
+			var button = document.createElement('button');
+			button.type = 'button';
+			button.textContent = entry.label;
+			if (entry.owned) {
+				button.addEventListener('click', function () {
+					watch.contextAction(entry.action);
+					hideContextMenu();
+				});
+			} else {
+				button.disabled = true;
+				button.title = 'the Electron shell owns this one';
+			}
+			menu.appendChild(button);
+		});
+
+		slot.addEventListener('contextmenu', function (event) {
+			event.preventDefault();
+			menu.classList.add('open');
+		});
+		document.addEventListener('click', function (event) {
+			if (menu.classList.contains('open') && !menu.contains(event.target)) {
+				hideContextMenu();
+			}
+		});
+	}
+
+	function hideContextMenu() {
+		var menu = document.getElementById('context-menu');
+		if (menu) { menu.classList.remove('open'); }
 	}
 
 	function buildRegisterButtons() {
@@ -785,6 +881,7 @@ const LIVE_SCRIPT = `
 	buildGestureButtons();
 	buildRegisterButtons();
 	buildZoneButtons();
+	buildContextMenu();
 
 	watch.subscribe(function () { render(); });
 	watch.start();

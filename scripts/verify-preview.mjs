@@ -51,7 +51,11 @@ for (const id of required) {
 console.log(`modules required: ${required.join(', ')} — all present in the bundle`);
 
 // 4. The page must expose the control elements the script looks for.
-for (const id of ['controls', 'register-buttons', 'zone-buttons', 'status']) {
+//
+// Every id the inline script queries belongs here. A missing one does not throw — the script guards
+// each lookup — so the control silently does nothing, which is exactly the failure this file exists
+// to catch.
+for (const id of ['controls', 'mode-buttons', 'gesture-buttons', 'register-buttons', 'light-buttons', 'zone-buttons', 'status', 'context-menu']) {
 	if (!html.includes(`id="${id}"`)) {
 		console.error(`missing element : FAILED — no #${id}`);
 		process.exit(1);

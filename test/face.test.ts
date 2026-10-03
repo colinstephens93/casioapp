@@ -22,6 +22,7 @@ import { renderFace, type DisplayState } from '../src/renderer/face.ts';
 import { stateFor, scenarios } from '../src/renderer/preview.ts';
 import { CELL_HEIGHT, CELL_WIDTH, textWidth } from '../src/shared/svg.ts';
 import { FACE, TEXT_SIZE, TRACKING } from '../src/shared/theme.ts';
+import { CITIES } from '../src/shared/catalog.ts';
 import { formatDay, formatMonthDay } from '../src/shared/time.ts';
 
 const AT = new Date(Date.UTC(2026, 6, 15, 22, 48, 37));
@@ -589,15 +590,202 @@ describe('formatting reaches the face intact', () => {
 		assert.match(monthDay, /^\d{1,2}-\d{1,2}$/);
 	});
 
-	it('truncates a long city name rather than letting it run into the code field', () => {
-		// The World Time screen shows names, which are the only strings of unpredictable length on
-		// the face. `Fernando de Noronha` is the longest in the catalogue.
-		const svg = renderFace(baseState({ mode: 'worldtime', worldCity: 'Fernando de Noronha' }));
-		for (const glyph of runOfHeight(svg, TEXT_SIZE.field)) {
+/**
+ * A glyph's character from the sprite symbol id.
+ *
+ * The markup carries the *symbol name*, not the character: `<use href="#ch-space">` for a blank and
+ * `#ch-dash`, `#ch-colon`, `#ch-dot` for the punctuation that has no safe id of its own (see
+ * `glyphId` in `svg.ts`). Comparing rendered text against a literal string without mapping these back
+ * produced an assertion failure reading `NEWspaceYORK` — the code was right and the reader was naive.
+ */
+const CHARACTER_OF_ID: Readonly<Record<string, string>> = {
+	space: ' ',
+	dash: '-',
+	colon: ':',
+	dot: '.',
+};
+
+function characterOf(id: string): string {
+	return CHARACTER_OF_ID[id] ?? id;
+}
+
+describe('the city name on the World Time screen (WLD-1)', () => {
+	/**
+	 * A World Time face for a zone, built through the real scenario path — so the name comes from the
+	 * catalogue and the code from the same city, which is what the screen actually renders.
+	 *
+	 * The first version of these tests passed a `worldCity` and a `cityCode` by hand while leaving
+	 * `mode` at its default of timekeeping, so the World Time branch never ran and every assertion
+	 * was reading the *weekday* row instead. The numbers looked plausible, which is why it took a
+	 * failing gap check to notice.
+	 */
+	const worldFace = (zone: string): string =>
+		renderFace(
+			stateFor({
+				title: 'world',
+				note: '',
+				zone,
+				homeZone: 'Europe/London',
+				at: AT,
+				clock: '24h',
+				mode: 'worldtime',
+				dst: 'auto',
+			}),
+		);
+
+	/** The same face, with the register indicator occupying the row (MOD-3). */
+	const worldFaceWithIndicator = (zone: string): string =>
+		renderFace(
+			stateFor({
+				title: 'world',
+				note: '',
+				zone,
+				homeZone: 'Europe/London',
+				at: AT,
+				clock: '24h',
+				mode: 'worldtime',
+				dst: 'auto',
+				showRegister: true,
+				multiTime: 2,
+			}),
+		);
+
+	/**
+	 * The name run's glyphs.
+	 *
+	 * Identified by **column, not by row**: the name and the code sit at the same y, because they are
+	 * two fields on one line. Filtering by y alone merges them into `TOKYOTYO`, which is how the
+	 * first version of these tests passed while measuring nothing.
+	 */
+	const nameRun = (svg: string) =>
+		runOfHeight(svg, TEXT_SIZE.field).filter(
+			(glyph) => glyph.y === FACE.dateField.y && glyph.x < FACE.codeField.x,
+		);
+
+	/** The code field's glyphs, which start at the code column. */
+	const codeRun = (svg: string) =>
+		runOfHeight(svg, TEXT_SIZE.field).filter(
+			(glyph) => glyph.y === FACE.codeField.y && glyph.x >= FACE.codeField.x,
+		);
+
+	const textOf = (glyphs: { character: string }[]): string =>
+		glyphs.map((glyph) => characterOf(glyph.character)).join('');
+
+	it('shows a short name whole, and the code in its own field', () => {
+		const svg = worldFace('Asia/Tokyo');
+		assert.equal(textOf(nameRun(svg)), 'TOKYO', 'the name fits and is shown');
+		assert.equal(textOf(codeRun(svg)), 'TYO', 'and the code has its own field');
+	});
+
+	it('shows a name whole or shows the code, never a truncated name', () => {
+		// The rule, and the reason for it: truncating to fit produced `NEW YOR`, `RIO DE J` and
+		// `FERNANDO D`, none of which is a place — the last is ten glyphs and still nonsense, so a
+		// floor on the length does not rescue it. A name is shown whole or replaced by the code, and
+		// the code is unambiguous by construction.
+		assert.equal(textOf(nameRun(worldFace('Asia/Tokyo'))), 'TOKYO', 'fits whole');
+		assert.equal(textOf(nameRun(worldFace('America/New_York'))), 'NEW YORK', 'seven glyphs, fits');
+		assert.equal(textOf(nameRun(worldFace('Pacific/Auckland'))), 'WELLINGTON', 'and ten fits');
+
+		// Eleven of the catalogue's names fit and thirty-eight do not. These three do not, at 211,
+		// 269 and 366 units against a 210-unit row.
+		assert.equal(textOf(nameRun(worldFace('America/Los_Angeles'))), 'LAX');
+		assert.equal(textOf(nameRun(worldFace('America/Sao_Paulo'))), 'RIO');
+		assert.equal(textOf(nameRun(worldFace('America/Noronha'))), 'FEN');
+	});
+
+	it('shows the register indicator in place of the code, not beside it (MOD-3)', () => {
+		// They are alternatives, and the reason is arithmetic: the name row needs 153 units for
+		// `NEW YORK`, the indicator 56 and the clearances 26, against 210 available. The code gives
+		// way, because the name above it already says where the time is from.
+		const gap = 12;
+		for (const multiTime of [1, 2, 3, 4]) {
+			const svg = renderFace(
+				baseState({ mode: 'worldtime', showRegister: true, multiTime, cityCode: 'AAA' }),
+			);
+			const row = runOfHeight(svg, TEXT_SIZE.field).filter(
+				(glyph) => glyph.y === FACE.codeField.y,
+			);
+
+			// Three runs share this y: the name at the date column, the indicator in the clearance,
+			// and the code at its own column — which is absent while the indicator shows.
+			const indicatorRun = row.filter(
+				(glyph) => glyph.x >= FACE.dateField.x + 120 && glyph.x < FACE.codeField.x,
+			);
+			assert.equal(indicatorRun.length, 3, `T-${multiTime} should be three glyphs`);
+			assert.equal(characterOf(indicatorRun[0]?.character ?? ''), 'T', 'and should start with T');
+
+			assert.equal(
+				row.filter((glyph) => glyph.x >= FACE.codeField.x).length,
+				0,
+				'the code is replaced, not duplicated',
+			);
+
+			// The name yields to the indicator rather than colliding with it: it is the elastic field
+			// and the indicator is not. `NEW YORK` cannot fit beside `T-2`, so the row steps down to
+			// the code — which is visible here as the name run holding exactly three glyphs.
+			const nameRun = row.filter(
+				(glyph) => glyph.x < FACE.dateField.x + 120 && glyph.x >= FACE.dateField.x,
+			);
+			assert.ok(nameRun.length > 0, 'something should identify the city');
+			const lastName = nameRun[nameRun.length - 1];
+			const firstIndicator = indicatorRun[0];
+			assert.ok(lastName && firstIndicator);
 			assert.ok(
-				glyph.x + glyph.w <= FACE.lcd.x + FACE.lcd.width,
-				'the city name was not truncated to its field',
+				lastName.x + lastName.w + gap <= firstIndicator.x,
+				`the name ends at ${(lastName.x + lastName.w).toFixed(1)}, the indicator starts at ${firstIndicator.x}, needing a ${gap} gap`,
 			);
 		}
 	});
+
+	it('reduces the city name to the code when the indicator will not leave room', () => {
+		// The concrete case: `NEW YORK` is 153 units and the reduced room — the code column less the
+		// indicator and both clearances — is 140. So the row shows the code rather than running `T-2`
+		// through `YORK`. Asserted on the glyph set rather than on the text, because the name run and
+		// the indicator share this row and the document order interleaves them.
+		const occupying = nameRun(worldFaceWithIndicator('America/New_York')).map((glyph) =>
+			characterOf(glyph.character),
+		);
+		// The indicator is emitted before the fields, so it leads. What matters is what follows it:
+		// the name stepped down to `NYC` rather than `NEW YOR` or a collision.
+		assert.deepEqual(occupying, ['T', '-', '2', 'N', 'Y', 'C'], 'the name stepped down to the code');
+
+		const free = textOf(nameRun(worldFace('America/New_York')));
+		assert.equal(free, 'NEW YORK', 'and with the row free, the name returns');
+	});
+
+	it('keeps the name clear of the code field beside it', () => {
+		// Both are field-glyph runs on the same line, so a gap is demanded rather than mere
+		// non-overlap — the same lesson the `ALM`/`TYO` collision taught in M2.
+		const gap = 12;
+		for (const zone of [
+			'Asia/Tokyo',
+			'America/New_York',
+			'America/Los_Angeles',
+			'Pacific/Auckland',
+			'Asia/Singapore',
+		]) {
+			const glyphs = nameRun(worldFace(zone)).filter((glyph) => glyph.character !== 'space');
+			const last = glyphs[glyphs.length - 1];
+			assert.ok(last, `${zone} rendered no name`);
+			assert.ok(
+				last.x + last.w + gap <= FACE.codeField.x,
+				`${zone}: the name reaches ${(last.x + last.w).toFixed(1)}, the code field starts at ${FACE.codeField.x}, needing a ${gap} gap`,
+			);
+		}
+	});
+
+	it('renders every catalogue name without leaving the LCD', () => {
+		// The row is the only place a string of unpredictable length reaches the face, so every name
+		// the catalogue can put there is drawn and checked.
+		for (const city of CITIES) {
+			const svg = worldFace(city.zone);
+			for (const glyph of runOfHeight(svg, TEXT_SIZE.field)) {
+				assert.ok(
+					glyph.x >= FACE.lcd.x && glyph.x + glyph.w <= FACE.lcd.x + FACE.lcd.width,
+					`${city.name}: a glyph reaches ${(glyph.x + glyph.w).toFixed(1)}`,
+				);
+			}
+		}
+	});
+});
 });

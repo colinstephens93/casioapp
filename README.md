@@ -40,7 +40,7 @@ that works both inside the sandbox and on an ordinary machine. Full explanation 
 Then:
 
 ```sh
-npm test         # 358 unit tests: time, zones, DST, map, glyphs, face, screens, gestures
+npm test         # 361 unit tests: time, zones, DST, map, glyphs, face, screens, gestures, battery
 npm run build    # compiles main/preload to CommonJS and shared/renderer to ESM, then verifies the preview
 npm run typecheck  # four tsconfigs — the tests cannot see types, so this is not optional
 npm start        # builds, then launches the widget
@@ -90,7 +90,7 @@ TypeScript itself.
 
 ## Progress
 
-**358 tests passing, typecheck clean on all four configs.** The verifiable core is complete — see
+**361 tests passing, typecheck clean on all four configs.** The verifiable core is complete — see
 [docs/PROGRESS.md](docs/PROGRESS.md) for the history and [docs/HANDOFF.md](docs/HANDOFF.md) for where
 to pick up.
 
@@ -109,8 +109,9 @@ to pick up.
 | Stopwatch: elapsed, split, two finishes, 24-hour rollover | Working |
 | Pusher gestures: press, hold at 1/2/3 s, chords, repeats | Working, 25 tests |
 | Auto Display, auto-return, MUTE, flashing setting fields | Working |
+| Battery simulation: drains from real alarm and backlight seconds | Working, calibrated to Casio's rating |
+| Context menu, illumination duration | Working (controller half; the shell supplies the menu) |
 | Browser preview with live controls | Working — open `dist/preview/index.html` |
-| Battery simulation, amber backlight wash | Backlight works; the battery charges for light but **not yet for alarm sound** |
 | Notifications, tray, packaging | Not built; **cannot be run in the development sandbox** |
 
 ### Seeing it without running it
@@ -125,10 +126,11 @@ node scripts/extract-svg.mjs 0 dist/preview/face-0.svg
 python scripts/svg_to_png.py dist/preview/face-0.svg face.png 2
 ```
 
-### Four things needing human eyes
+### Five things needing human eyes
 
 The **colours** are modelled from product photography rather than measured, the **segment
 proportions** were authored by eye, the **case is 5.7% taller than the device** so that the printed
-`10 YEAR BATTERY` line has somewhere to sit (see [docs/RESEARCH.md](docs/RESEARCH.md) §6), and the
+`10 YEAR BATTERY` line has somewhere to sit (see [docs/RESEARCH.md](docs/RESEARCH.md) §6), **most city
+names do not fit the World Time row** and are shown as their three-letter codes instead, and the
 product name `royale` is a placeholder. All of them live as tokens or constants, so correcting them is
 one edit each. The fastest route is to open `dist/preview/index.html` beside the real watch.
