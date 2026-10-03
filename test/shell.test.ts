@@ -12,7 +12,7 @@
  * only construct that works in both directions. See `scripts/steps.mjs`.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -35,6 +35,95 @@ import { APP_USER_MODEL_ID, notificationFor, toastXmlFor } from '../src/main/not
 
 /** A work area with a taskbar along the bottom, so clamping has something to avoid. */
 const WORK: WorkArea = { x: 0, y: 0, width: 1920, height: 1040 };
+
+/** The repository root, for the build-configuration checks at the end of this file. */
+const ROOT = join(import.meta.dirname, '..');
+
+/**
+ * The build's own configuration.
+ *
+ * A build script is code, and it fails in the same silent way everything else does: a watched directory
+ * that was never added to the list leaves `dist` quietly out of date while looking correct. That exact
+ * bug shipped in `watch.mjs` — `src/main` was missing, so editing `config.ts` left `dist/main/*.js` at
+ * its last-built content and `npm start` ran the old module.
+ *
+ * These are cheap source inspections, not a watcher harness: spawning a file watcher inside the test
+ * runner would be slow, flaky, and would need the same subprocess rules `docs/ENVIRONMENT.md` §2
+ * describes. Inspecting the list catches the realistic mistake — a new tree nobody added — which is
+ * precisely the one that happened.
+ */
+describe('the build configuration', () => {
+	const watchSource = readFileSync(join(ROOT, 'scripts', 'watch.mjs'), 'utf-8');
+
+	/** The `dir:` values in the watcher's `TREES` array. */
+	function watchedTrees(): string[] {
+		return [...watchSource.matchAll(/dir:\s*'([^']+)'/g)].map((match) => match[1] ?? '');
+	}
+
+	it('watches every source tree that the build compiles', () => {
+		const watched = watchedTrees();
+		assert.ok(watched.length > 0, 'the watcher declares no trees at all');
+
+		// Every populated directory under `src/` must be watched, or a change to it is invisible.
+		const trees = readdirSync(join(ROOT, 'src'), { withFileTypes: true })
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => `src/${entry.name}`);
+
+		assert.ok(trees.length >= 4, `expected the four source trees, found ${trees.join(', ')}`);
+		for (const tree of trees) {
+			assert.ok(
+				watched.includes(tree),
+				`${tree} is compiled by the build but not watched — edits to it would leave dist stale`,
+			);
+		}
+	});
+
+	it('copies every static asset the page asks for', () => {
+		// The build's `copyStatic` and the page's own references have to agree. A file that the HTML asks
+		// for but the build does not copy is a blank window with a 404 nobody is watching for — the same
+		// class of failure `scripts/verify-widget.mjs` checks after the fact.
+		const stepsSource = readFileSync(join(ROOT, 'scripts', 'steps.mjs'), 'utf-8');
+		const html = readFileSync(join(ROOT, 'src', 'renderer', 'index.html'), 'utf-8');
+		const referenced = [...html.matchAll(/(?:href|src)="\.\/([^"]+)"/g)].map((match) => match[1] ?? '');
+
+		assert.ok(referenced.length > 0, 'the page references no local assets, which cannot be right');
+		for (const asset of referenced) {
+			// The scripts are build output, not static assets; the HTML and CSS are copied.
+			if (asset.endsWith('.js')) {
+				continue;
+			}
+			assert.ok(
+				stepsSource.includes(`'${asset}'`),
+				`index.html references ${asset}, which copyStatic does not copy`,
+			);
+		}
+	});
+
+	it('runs the widget verification as part of the build', () => {
+		// A verifier that nobody invokes is worse than none, because `docs/ENVIRONMENT.md` would claim
+		// the check exists.
+		const buildSource = readFileSync(join(ROOT, 'scripts', 'build.mjs'), 'utf-8');
+		assert.match(buildSource, /verify-widget\.mjs/, 'the build runs the widget verifier');
+		assert.match(buildSource, /verify-preview\.mjs/, 'the build runs the preview verifier');
+	});
+
+	it('keeps the main tsconfig on Node16, which the dynamic import needs', () => {
+		// `module: "CommonJS"` downlevels `import()` to `require()`, which cannot load the ESM half. The
+		// build would succeed and the app would die at startup with ERR_REQUIRE_ESM. Asserted here as well
+		// as in test/wiring.test.ts, because that file needs `dist` to exist and this does not.
+		//
+		// Read as **text**, not `JSON.parse`: `tsconfig.main.json` is JSONC and carries the comments
+		// explaining this very setting, so parsing it as JSON throws on line 4.
+		const source = readFileSync(join(ROOT, 'tsconfig.main.json'), 'utf-8');
+		const found = /"module"\s*:\s*"([^"]+)"/.exec(source);
+		assert.notEqual(found, null, 'tsconfig.main.json declares no module setting');
+		assert.equal(
+			found?.[1],
+			'Node16',
+			"module must be Node16 or the shell's dynamic import() is compiled away",
+		);
+	});
+});
 
 /** A temporary directory that is removed when the tests finish. */
 const scratch = mkdtempSync(join(tmpdir(), 'casioapp-config-'));

@@ -9,7 +9,7 @@ Last updated: after the Electron shell (M1, and M8's window half).
 
 | Metric | Value |
 |---|---|
-| Tests | **416 passing**, 0 failing, across 90 suites and 14 files |
+| Tests | **420 passing**, 0 failing, across 91 suites and 14 files |
 | Typecheck | Clean on all four `tsconfig` files, including the Electron main process |
 | Build | Clean, single pass, and self-verifying: it verifies the preview page *and* the widget page |
 | Screens | All five (Timekeeping, World Time, Alarm, Timer, Stopwatch) plus six setting screens |
@@ -32,7 +32,7 @@ Last updated: after the Electron shell (M1, and M8's window half).
 | `test/stopwatch.test.ts` | 18 | The three behaviours, the 24-hour rollover, formatting |
 | `test/gestures.test.ts` | 25 | Press, hold at each real duration, chord, repeat cadence |
 | `test/controller.test.ts` | 62 | Cadence, the battery model, the seconds reset, restart, notifications, the host's controls |
-| `test/shell.test.ts` | 32 | The config schema, its repair, the atomic write, window clamping, the toast payload and XML |
+| `test/shell.test.ts` | 36 | The config schema, its repair, the atomic write, window clamping, the toast payload and XML |
 | `test/wiring.test.ts` | 23 | The built shell against a fake Electron: window options, tray menu, notification, IPC surface, boot |
 | `test/catalog.test.ts` | 19 | The watch's 49-code table, extended zones, sorting and exclusion |
 | `test/glyphs.test.ts` | 18 | Glyph coverage, digit uniqueness, collision audit |
@@ -378,6 +378,33 @@ reason:
 
 And one in my own test: a helper captured `visible` as a parameter instead of reading it through a
 getter, so flipping it changed nothing and the tray "correctly" showed a stale label.
+
+### `npm run watch` was quietly producing a stale build
+
+Found by checking the one item I had listed as unverified. `watch.mjs` watched `src/shared` and
+`src/renderer` and **not `src/main`** — so editing `config.ts` or `notify.ts` left `dist/main/*.js` at
+its last-built content, and `npm start` and `npm test` ran the old module while everything looked
+healthy. It was confirmed rather than assumed: touching `src/main/config.ts` left the built file's
+timestamp untouched, while a `src/renderer` change rebuilt normally.
+
+The fix watches all four trees and routes each change to the step that needs it — the in-process
+transpiler for the ESM half, `tsc` for the `.cts` half, and `copyStatic` for the HTML and CSS. Two
+follow-on problems surfaced while testing it:
+
+1. **One edit produced four rebuild cycles.** Windows `fs.watch` fires more than once per save, and it
+   reports events for changes that are not edits at all. The watcher now fingerprints each file (size
+   plus mtime) and ignores an event whose file has not actually changed.
+2. **The log was unreadable.** Every rebuild recompiled every file, so the output said "compiled 4
+   file(s)" on each keystroke and never said which file triggered it — which is how the redundancy went
+   unnoticed. The transpiler now skips files whose fingerprint is unchanged and reports a count only
+   when it writes something, so the watcher log reads `rebuilt: src\main\tray.cts` and nothing else.
+
+**The bug class is now pinned by tests** rather than by care: `test/shell.test.ts` asserts that every
+populated directory under `src/` is watched, that every non-script asset `index.html` references is in
+`copyStatic`, that the build actually invokes both verifiers, and that `tsconfig.main.json` still says
+`Node16`. All four were mutation-tested — removing `src/main` from the watcher, dropping `styles.css`
+from `copyStatic`, deleting the widget-verifier call, and reverting the module setting — and all four
+were caught.
 
 ## A recurring failure worth recordingAcross M2 and M4 I repeatedly **asserted values from memory instead of computing them**, and every
 single one was wrong:

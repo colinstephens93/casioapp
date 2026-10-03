@@ -366,13 +366,16 @@ correcting the first four.
 
 ## 8. Repository state
 
-Four commits on `main`, the most recent being `Continued development` (M0–M7).
+Four commits on `main`; the most recent, `continued dev`, took M0–M7 plus M8's code and the whole
+Electron shell.
 
-**The M8 and shell work is uncommitted**: the battery model, two config-repair fixes, the `watch.ts`
-consolidation, the context menu, the illumination setting, the World Time name rule, the register
-indicator fix, and then the whole Electron shell — `src/main` (six files), `src/preload`,
-`src/renderer/index.ts`, `styles.css`, `index.html`, `electron-builder.yml`, `scripts/verify-widget.mjs`,
-`test/shell.test.ts`, and the `tsconfig.main.json` module-format change.
+**Uncommitted:** the fake-Electron wiring test (`test/wiring.test.ts`, `test/fake-electron.mjs`), the
+`npm run check` script, and the `watch.mjs` fix — plus documentation.
+
+The watcher fix is worth knowing about before trusting a development loop: `src/main` was **not**
+watched, so editing `config.ts` or `notify.ts` left `dist/main` stale while the build looked healthy.
+`test/shell.test.ts` now pins the watch list against the directories under `src/`, so the same omission
+cannot be reintroduced silently.
 
 ## 9. Working agreements established in this project
 

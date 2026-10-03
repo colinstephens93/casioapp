@@ -40,7 +40,7 @@ that works both inside the sandbox and on an ordinary machine. Full explanation 
 Then:
 
 ```sh
-npm test         # 416 unit tests: time, zones, DST, map, glyphs, face, screens, gestures, battery, shell
+npm test         # 420 unit tests: time, zones, DST, map, glyphs, face, screens, gestures, battery, shell
 npm run check    # typecheck + build + tests, in the order a clean checkout needs
 npm run build    # compiles main/preload to CommonJS and shared/renderer to ESM, then verifies both pages
 npm run typecheck  # four tsconfigs — the tests cannot see types, so this is not optional
@@ -95,7 +95,7 @@ TypeScript itself.
 
 ## Progress
 
-**416 tests passing, typecheck clean on all four configs.** The verifiable core is complete — see
+**420 tests passing, typecheck clean on all four configs.** The verifiable core is complete — see
 [docs/PROGRESS.md](docs/PROGRESS.md) for the history and [docs/HANDOFF.md](docs/HANDOFF.md) for where
 to pick up.
 
@@ -111,7 +111,7 @@ to pick up.
 | Pusher gestures: press, hold at 1/2/3 s, chords, repeats | Working, 25 tests |
 | Auto Display, auto-return, MUTE, flashing setting fields | Working |
 | Battery model, illumination, context menu | Working, calibrated to Casio's rating |
-| Config file: schema, repair, atomic write | Built, 32 tests — `src/main/config.ts` |
+| Config file: schema, repair, atomic write | Built, 32 tests, plus 4 build-configuration checks — `src/main/config.ts` |
 | Browser preview with live controls | Working — open `dist/preview/index.html` |
 | Electron shell: window, tray, notifications, packaging | **Written, and its wiring tested against a fake Electron — but never run.** See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) §9 |
 

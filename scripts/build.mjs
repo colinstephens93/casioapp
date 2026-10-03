@@ -2,10 +2,9 @@
 //
 // Every step is in-process or uses inherited stdio, because this sandbox forbids spawning a child
 // with piped stdio. See docs/ENVIRONMENT.md.
-import { clean, compileMain, compileMainPure, compileRenderer, root } from './steps.mjs';
-import { cpSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { clean, compileMain, compileMainPure, compileRenderer, copyStatic, root } from './steps.mjs';
 import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 
 function run(script, label) {
 	const result = spawnSync(process.execPath, [join(root, 'scripts', script)], {
@@ -26,13 +25,7 @@ await compileRenderer();
 await compileMainPure();
 
 // The TypeScript step emits only .js; the HTML and CSS travel alongside it.
-const from = join(root, 'src', 'renderer');
-const to = join(root, 'dist', 'renderer');
-mkdirSync(to, { recursive: true });
-for (const file of ['index.html', 'styles.css']) {
-	cpSync(join(from, file), join(to, file));
-}
-console.log('static renderer assets copied');
+copyStatic();
 
 run('bundle-preview.mjs', 'preview bundle');
 run('make-preview.mjs', 'preview page');
