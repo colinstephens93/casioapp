@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Desktop clock widget modelled on the Casio AE-1200WH (module 3198).",
+  "main": "dist/main/main.cjs",
   "scripts": {
     "fetch:electron": "node scripts/fetch-electron.mjs",
     "build": "node scripts/build.mjs",
@@ -12,7 +13,8 @@
     "start": "npm run build && node scripts/run.mjs",
     "test": "node --test --test-isolation=none \"test/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.shared.json && tsc -p tsconfig.renderer.json",
-    "verify": "node scripts/verify-preview.mjs"
+    "verify": "node scripts/verify-preview.mjs && node scripts/verify-widget.mjs",
+    "package": "npm run build && electron-builder --win --config electron-builder.yml"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

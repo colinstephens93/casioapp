@@ -1,4 +1,27 @@
-/* M0 scaffold styles: prove transparency and the drag region work. */
+/*
+ * The widget's window: a transparent frame, the case letterboxed inside it, and the drag rules.
+ *
+ * # Letterboxing (WIN-6, WIN-7, WIN-8)
+ *
+ * The device keeps its true proportions at every window size; the window's aspect ratio is not the
+ * device's. So the case is scaled to the largest size that *fits* — `min()` of the two ratios — and
+ * centred. Whatever is left over is painted the case's own colour, so an extreme window reads as
+ * bezel rather than as broken layout. That is the whole of the rule, and it is four CSS lines.
+ *
+ * The case colour is duplicated from `THEME.caseBody` in `src/shared/theme.ts` because this file is
+ * plain CSS and cannot import it. `test/face.test.ts` asserts the theme's value; a mismatch here would
+ * show as a visible seam, which is the kind of thing a human notices immediately and a test cannot.
+ *
+ * # Dragging (WIN-2, plan risk R-2)
+ *
+ * The case is the drag handle and **only** the case. Every interactive child must opt out with
+ * `no-drag`, or the drag region swallows its clicks — the classic failure of this pattern, and the one
+ * the plan flags as high-likelihood. The pushers and the LCD are therefore explicitly `no-drag`: the
+ * LCD is a click target (INT-3) and the pushers are the entire interface.
+ *
+ * The `no-drag` region is applied per *pusher*, not to the whole SVG, because the area between the
+ * case edge and the pushers should still drag.
+ */
 
 html,
 body {
@@ -8,47 +31,80 @@ body {
 	height: 100%;
 	background: transparent;
 	overflow: hidden;
-	font-family: ui-monospace, monospace;
+	/* A desktop widget is not a document: selecting the case text would be a bug, not a feature. */
 	user-select: none;
 	-webkit-user-select: none;
+	cursor: default;
 }
 
 #root {
 	width: 100%;
 	height: 100%;
-	box-sizing: border-box;
-	padding: 10px;
-	/* The case is the drag handle. M1 attaches this to the real case silhouette. */
+	display: grid;
+	place-items: center;
+	/* WIN-7: the leftover area is the case material, not a gap. */
+	background: transparent;
+}
+
+/*
+ * The case.
+ *
+ * `aspect-ratio` rather than a fixed height, so the device keeps its proportions however the window is
+ * dragged; `min()` picks the binding constraint, which is what "the largest size that fits" means. The
+ * ratio is `FACE.width` : `FACE.height` from `theme.ts` — 450 : 445, in tenths of a millimetre — and it
+ * is the *device's* ratio, not the window's.
+ */
+.case {
+	aspect-ratio: 450 / 445;
+	width: min(100%, calc(100cqh * 450 / 445));
+	max-width: 100%;
+	max-height: 100%;
+	display: grid;
+	place-items: center;
+	/* WIN-2: the case drags. */
 	-webkit-app-region: drag;
 }
 
-/* Any interactive control must opt out, or the drag region swallows its clicks (plan R-2). */
-.no-drag {
+#root {
+	container-type: size;
+}
+
+/*
+ * The SVG fills the case exactly. It is drawn in the case's own coordinate system, so it needs no
+ * aspect-ratio maths of its own — the viewBox does it.
+ */
+.case svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
+/*
+ * WIN-2's exception, and INT-2/INT-3 with it.
+ *
+ * The pushers are the interface; a drag region over them would make the widget unclickable. The LCD is
+ * a click target too (INT-3), and the case body beneath everything stays draggable.
+ */
+.case .pusher,
+.case .pusher-label,
+.case .lcd-content,
+.case .lcd-glass,
+.case .lcd-bezel {
 	-webkit-app-region: no-drag;
 }
 
-.gate {
-	width: 100%;
-	height: 100%;
-	box-sizing: border-box;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 6px;
-	border: 2px solid #3a3f35;
-	border-radius: 18px;
-	background: #14170f;
-	color: #b8d4a0;
+/*
+ * A pressed pusher is already drawn depressed by the face; this only removes the browser's own focus
+ * ring, which would be a blue halo on a matte black case.
+ */
+.case path,
+.case rect,
+.case circle {
+	outline: none;
 }
 
-.gate .title {
-	font-size: 13px;
-	letter-spacing: 0.18em;
-	color: #c9a15a;
-}
-
-.gate .line {
-	font-size: 11px;
-	opacity: 0.85;
+/* The casing's own text is drawn as SVG `<text>` with no font family of its own, so this is the
+   fallback for the case print only. The LCD never uses it — every LCD character is seven segments. */
+.case text {
+	font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }

@@ -112,9 +112,17 @@ layout test fails, the layout is wrong — change the constants, not the test.**
 | `src/shared/machine.ts` | **Every screen and sub-screen.** A pure reducer | What every pusher does, everywhere |
 | `src/shared/gestures.ts` | Press, hold and chord at the watch's durations | Injectable clock; no timers |
 | `src/shared/controller.ts` | **Everything with a clock in it** | The only object with timers, cadence, persistence and the battery |
-| `src/shared/watch.ts` | The pure zone-and-clock derivation | `syncWatch` only: settings plus an instant to a snapshot. It is not a second owner of the watch — see §5 |
+| `src/shared/watch.ts` | The pure zone-and-clock derivation | `syncWatch` only: settings plus an instant to a snapshot. Not a second owner of the watch — see §5 |
 | `src/renderer/face.ts` | **The single layout authority.** Case, LCD, all fields | Pure; no DOM |
+| `src/renderer/index.ts` | The widget's entry: binds the controller to the bridge | The same `WatchController` the preview runs |
 | `src/renderer/preview.ts` | The standalone preview page and its inline script | The inline script is a template string — see §5 |
+| `src/main/config.ts` | The config schema, repair, clamping, atomic write | **ESM and Electron-free**, so it is unit-tested — see §5 |
+| `src/main/notify.ts` | The notification payload and the toast XML | **ESM and Electron-free**, likewise |
+| `src/main/main.cts` | The process: window, tray, IPC, lifecycle | CommonJS; imports Electron |
+| `src/main/window.cts` | The window, its letterbox contract, the fullscreen yield | CommonJS |
+| `src/main/tray.cts` | The tray icon and menu | CommonJS; the icon is drawn, not shipped |
+| `src/main/notifications.cts` | The Electron-facing half of notifications | CommonJS |
+| `src/preload/preload.cts` | The five-method context bridge | CommonJS; the renderer's entire outside world |
 
 ## 5. Traps in this codebase
 
@@ -218,6 +226,54 @@ did not move with it. An invalid zone then reached `offsetMinutes`, which throws
 
 Before deleting a module, read what it *accepts*, not just what it exports.
 
+### The ESM/CommonJS boundary, and why the file extension decides it
+
+This is the trap most likely to cost an afternoon, so it is written out in full.
+
+`src/main` and `src/preload` are **CommonJS** (`.cts`), because that is what Electron's main and preload
+environments are. `src/shared` and `src/renderer` are **ESM** (`.ts`), because the renderer is a page and
+the tests load them directly. Both are real requirements, and they meet in three places:
+
+1. **`src/shared` cannot be required from main.** Its compiled form in `dist/shared/*.js` is ESM, and
+   `require()` on ESM throws `ERR_REQUIRE_ESM`.
+2. **A `.cts` file cannot be loaded by the test runner.** It is CommonJS by extension, so the ESM loader
+   refuses it, and `createRequire` refuses the `import` statements inside it.
+
+The resolution, which is a convention rather than a trick — **the extension says which module system a
+file is**:
+
+| File | Module system | May import | Tested by `npm test`? |
+|---|---|---|---|
+| `src/shared/*.ts`, `src/renderer/*.ts` | ESM | anything below it | yes |
+| `src/main/*.ts` | ESM | Node built-ins only | **yes** |
+| `src/main/*.cts`, `src/preload/*.cts` | CommonJS | Electron, Node, and its ESM neighbours *dynamically* | no |
+
+So pure main-process logic goes in `src/main/*.ts` (`config.ts`, `notify.ts`), and the Electron-facing
+code goes in `src/main/*.cts`. Three consequences, all of which bit during M8:
+
+- **A `.cts` file reaches an ESM neighbour with `await import('./config.js')`**, not a static import.
+  The specifier is `.js` because that is what is emitted.
+- **Type-only imports across that boundary need a `resolution-mode` attribute**:
+  `import type { Bounds } from './config.ts' with { 'resolution-mode': 'import' }`. Without it, Node16
+  resolution applies CommonJS rules to an ESM target and refuses.
+- **`tsconfig.main.json` must set `module: "Node16"`, not `"CommonJS"`.** This is the subtle one: plain
+  `CommonJS` **downlevels a dynamic `import()` to `require()`**, which cannot load the ESM module — so
+  the build succeeds and the app dies at startup with `ERR_REQUIRE_ESM`. `scripts/verify-widget.mjs`
+  asserts the emitted form, because the mistake is invisible in the source and in the types.
+
+`npm run build` compiles `src/main` **twice**, for this reason: `tsc` emits the `.cts` files as CommonJS,
+and the in-process transpiler emits the `.ts` files as ESM. See `scripts/steps.mjs`.
+
+### `serialiseConfig` stamps the current version, so it cannot express a file from the future
+
+`isFromTheFuture` and `ConfigFile.load`'s read-only path are real and tested, but a test cannot build a
+future file with `serialiseConfig` — that function deliberately writes `CONFIG_VERSION`. Write the JSON
+by hand, as `test/shell.test.ts` does.
+
+The related ordering matters too: `load` checks `isFromTheFuture` **before** the repair comparison,
+because a file from the future differs from what this build would write by definition and would
+otherwise be reported as damaged.
+
 ### A truncated name is a wrong name
 
 The World Time row is 210 units and shows a city name whole or the city's three-letter code, never a
@@ -271,21 +327,19 @@ obvious in the image — including one class (case print over a live field) that
 
 ## 7. What is next
 
-### Immediate: M1 and the rest of M8 — the Electron shell
+### The shell is written; it needs a desktop
 
-Everything verifiable without a window is done. What remains needs a real desktop, where
-`ELECTRON_RUN_AS_NODE` is not set:
+M1 and M8's window half are now implemented: window, tray, config file, notifications, the renderer
+entry point, the letterbox layout, the drag rules and the packaging config. **None of it can be run
+here** — DSH is a non-interactive desktop and Chromium needs the named pipes the sandbox forbids.
 
-- **M1 — window citizenship.** Tray with Show/Hide, Quit and a "reset position" action; no taskbar
-  entry and no Alt+Tab presence; always-on-top that yields to a fullscreen application; position and
-  size persistence with a restored position clamped into the visible work area; dragging by the case,
-  with `-webkit-app-region: no-drag` on every pusher or they will be swallowed (plan risk R-2).
-- **M8's shell half.** Windows notifications registered in the alarm category so Focus Assist is
-  respected — `ControllerDeps.notify` is the seam and is already called once per firing; the amber wash
-  *in situ*; packaging with `electron-builder`; NFR-9's keyboard-reachable tray menu.
-- `main.cts` and `preload.cts` are still the M0 scaffold: a frameless transparent window and a `ping`
-  bridge. `WatchController` is ready to drive the renderer, and its `ControllerDeps` already takes the
-  `now` / `mono` / `setTimer` functions the real event loop supplies.
+`docs/ENVIRONMENT.md` §9 is the checklist: sixteen claims, ordered by how likely each is to be wrong,
+each with the requirement it serves and how to check it. Items 6 (always-on-top yielding to fullscreen),
+10 (a toast that Focus Assist respects) and 16 (the AppUserModelID pairing) are the three where a
+problem is most likely, and item 6 is explicitly an approximation rather than an implementation.
+
+`docs/ENVIRONMENT.md` §10 explains why only the pure half of the shell is unit-tested, and §11 why the
+notification's category is toast XML rather than an Electron option.
 
 ### Needs a human, not an agent
 
@@ -296,18 +350,20 @@ Everything verifiable without a window is done. What remains needs a real deskto
 4. **The World Time name rule.** Thirty-eight of the forty-nine names do not fit the row and are shown
    as codes. The alternative is a wider row, which costs the code field or the register indicator — a
    design call, not an engineering one.
-5. **The product name.** `royale` is a placeholder and appears in packaging metadata.
+5. **The product name.** `royale` is a placeholder and appears in `electron-builder.yml`'s `appId`.
 
 Open `dist/preview/index.html` and compare it against the real watch. That is the fastest route to
-correcting all five.
+correcting the first four.
 
 ## 8. Repository state
 
 Four commits on `main`, the most recent being `Continued development` (M0–M7).
 
-**The M8 pass is uncommitted**: the battery model, the two config-repair fixes, the `watch.ts`
-consolidation, the context menu, the illumination setting, the World Time name rule, and the register
-indicator fix.
+**The M8 and shell work is uncommitted**: the battery model, two config-repair fixes, the `watch.ts`
+consolidation, the context menu, the illumination setting, the World Time name rule, the register
+indicator fix, and then the whole Electron shell — `src/main` (six files), `src/preload`,
+`src/renderer/index.ts`, `styles.css`, `index.html`, `electron-builder.yml`, `scripts/verify-widget.mjs`,
+`test/shell.test.ts`, and the `tsconfig.main.json` module-format change.
 
 ## 9. Working agreements established in this project
 

@@ -753,16 +753,21 @@ describe('the chord promotes a city (INT-6)', () => {
 
 describe('a sounding alert silences on any button (ALM-7, TMR-6)', () => {
 	it('stops a test alarm and reports the alert to the face', () => {
+		// The face takes a *boolean* — "is something sounding" — rather than the alert object, because
+		// the blink is all it draws and passing the object would invite the renderer to interpret it.
+		// The alert's own kind is still on the machine state for callers that need it.
 		const { watch, clock } = controller();
 		tap(watch, 'mode');
 		tap(watch, 'mode');
 		assert.equal(watch.faceState().mode, 'alarm');
 
 		pressHold(watch, clock, 'search', 3_100);
-		assert.equal(watch.faceState().alert?.kind, 'test');
+		assert.equal(watch.getState().alert?.kind, 'test');
+		assert.equal(watch.faceState().alerting, true, 'and the face is told to blink (ALM-8)');
 
 		tap(watch, 'light');
-		assert.equal(watch.faceState().alert, null);
+		assert.equal(watch.getState().alert, null);
+		assert.equal(watch.faceState().alerting, false);
 	});
 
 	it('retires the alert on its own after ten seconds', () => {
@@ -770,11 +775,11 @@ describe('a sounding alert silences on any button (ALM-7, TMR-6)', () => {
 		tap(watch, 'mode');
 		tap(watch, 'mode');
 		pressHold(watch, clock, 'search', 3_100);
-		assert.notEqual(watch.faceState().alert, null);
+		assert.equal(watch.faceState().alerting, true);
 
 		watch.start();
 		clock.advance(ALERT_MS + 1_000);
-		assert.equal(watch.faceState().alert, null);
+		assert.equal(watch.faceState().alerting, false);
 	});
 });
 

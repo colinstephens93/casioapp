@@ -1,0 +1,60 @@
+# electron-builder configuration.
+#
+# `electron-builder` is not installed in this checkout — the DSH sandbox cannot run npm install scripts
+# at all, and a packaging toolchain adds ~100 MB of dependencies for a step that cannot be executed here
+# anyway (docs/ENVIRONMENT.md §2). This file is therefore written and reviewed, not run, and
+# `docs/ENVIRONMENT.md` §9 records that.
+#
+# ## Why the AppUserModelID matters here
+#
+# `APP_USER_MODEL_ID` in `src/main/notify.ts` and the `appId` below must be the **same string**. It is
+# duplicated because this file is YAML and cannot import TypeScript. A mismatch is silent and
+# expensive: Windows attributes a toast to the AppUserModelID stamped into the installed shortcut, so if
+# the two differ the alarm notification is attributed to `electron.exe` — and Focus Assist, quiet hours
+# and the notification-centre entry all apply to the wrong application. `test/shell.test.ts` asserts the
+# exported constant's shape; the pairing itself is checked by eye, which is why it is called out here.
+
+appId: com.casioapp.royale
+
+productName: casioapp
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the compiled output and the manifest. `src` is excluded because the app runs from `dist`; shipping
+# TypeScript sources would both bloat the installer and put the whole project in the user's Program Files.
+files:
+  - dist/**/*
+  - package.json
+  - NOTICE.md
+  - '!**/*.map'
+
+# No ASAR. The main process reaches its pure ESM modules with a dynamic `import()`, and while Electron's
+# ASAR integration does handle that, a packaging-only failure here would be invisible in this sandbox —
+# so the archive is left off rather than risk a launch failure that cannot be diagnosed here. The cost is
+# a slightly larger install.
+asar: false
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # No code signing. An unsigned installer produces a SmartScreen warning on first run, which is the
+  # honest state of a fan project with no certificate; requirement NFR-10 asks for an installer, not for
+  # a signed one.
+  signAndEditExecutable: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # A desktop shortcut is where the AppUserModelID is stamped, so it is not optional: without it the
+  # toast has no application identity to attach to.
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: casioapp
+
+# Requirement NFR-10 is Windows only. §9 item 7 of the requirements lists macOS and Linux packaging as
+# explicitly out of scope, so there is no mac or linux section here and its absence is deliberate.

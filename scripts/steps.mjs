@@ -96,3 +96,29 @@ export async function compileRenderer() {
 		outDir: join(root, 'dist', 'renderer'),
 	});
 }
+
+/**
+ * Compiles the main process's *pure* modules to ESM.
+ *
+ * `src/main` holds two kinds of file, and the extension is the discriminator:
+ *
+ *   `.cts`  Electron-facing, CommonJS, compiled by `tsc` alongside preload. Imports Electron, so it
+ *           cannot be unit-tested here at all.
+ *   `.ts`   Pure logic — the config schema, the notification phrasing. Imports only Node built-ins,
+ *           so it is unit-tested directly with no build step.
+ *
+ * The pure ones are emitted as **ESM** because that is the only format Node's type stripping and the
+ * test runner can load: a `.cts` file is CommonJS by extension, and the ESM loader refuses it, while
+ * `createRequire` refuses its `import` statements. Emitting ESM is what makes them testable, and the
+ * CommonJS main process reaches them with a dynamic `import()`, which works in both directions.
+ *
+ * `tsc` never sees these files: `tsconfig.main.json` includes only `**\/*.cts`, and the root config
+ * excludes `src/main` so that the renderer's emit cannot collide with this. If a `.ts` file is ever
+ * added to `src/main` that *does* want to be CommonJS, it belongs in `.cts`.
+ */
+export async function compileMainPure() {
+	await transpileDir({
+		srcDir: join(root, 'src', 'main'),
+		outDir: join(root, 'dist', 'main'),
+	});
+}

@@ -3,18 +3,19 @@
 A chronological record of what has been built, what was learned, and what is verified. Written for
 someone picking this up cold. For *how to work on it*, see [HANDOFF.md](HANDOFF.md).
 
-Last updated: after the M8 pass (battery model, context menu, and two config-repair bugs).
+Last updated: after the Electron shell (M1, and M8's window half).
 
 ## At a glance
 
 | Metric | Value |
 |---|---|
-| Tests | **361 passing**, 0 failing, across 78 suites and 12 files |
+| Tests | **393 passing**, 0 failing, across 84 suites and 13 files |
 | Typecheck | Clean on all four `tsconfig` files, including the Electron main process |
-| Build | Clean, single pass, and self-verifying (`npm run build` includes preview verification) |
+| Build | Clean, single pass, and self-verifying: it verifies the preview page *and* the widget page |
 | Screens | All five (Timekeeping, World Time, Alarm, Timer, Stopwatch) plus six setting screens |
-| Can it run? | **No** — see [ENVIRONMENT.md](ENVIRONMENT.md). Its *drawing* can be rendered and inspected. |
-| Git | Committed through M7 (`Continued development`); the M8 work above is uncommitted. |
+| Shell | Window, tray, config file, notifications, context menu and packaging are **written but cannot be run here** — ENVIRONMENT.md §9 is the checklist |
+| Can the watch run? | **No** — see [ENVIRONMENT.md](ENVIRONMENT.md). Its *drawing* can be rendered and inspected, and its logic is fully tested. |
+| Git | Committed through M7 (`Continued development`); everything since is uncommitted. |
 
 ### Test breakdown
 
@@ -30,6 +31,7 @@ Last updated: after the M8 pass (battery model, context menu, and two config-rep
 | `test/stopwatch.test.ts` | 18 | The three behaviours, the 24-hour rollover, formatting |
 | `test/gestures.test.ts` | 25 | Press, hold at each real duration, chord, repeat cadence |
 | `test/controller.test.ts` | 62 | Cadence, the battery model, the seconds reset, restart, notifications, the host's controls |
+| `test/shell.test.ts` | 32 | The config schema, its repair, the atomic write, window clamping, the toast payload and XML |
 | `test/catalog.test.ts` | 19 | The watch's 49-code table, extended zones, sorting and exclusion |
 | `test/glyphs.test.ts` | 18 | Glyph coverage, digit uniqueness, collision audit |
 
@@ -294,8 +296,52 @@ interleaved into `T-2TYO`, which is invisible to a pairwise overlap test. The in
 right-aligned by its own measured width, and the name yields to it, because the name is the elastic
 field.
 
-## A recurring failure worth recording
-Across M2 and M4 I repeatedly **asserted values from memory instead of computing them**, and every
+### The Electron shell — **written, not run**
+
+M1 and M8's window half. Nine source files, 32 tests, and a verifier — but the honest summary is that
+this is the first substantial block of work in the project that **cannot be executed here at all**.
+
+| Piece | What it does | Requirement |
+|---|---|---|
+| `main.cts` | Lifecycle, single-instance lock, IPC, context menu | WIN-1, INT-7, NFR-6 |
+| `window.cts` | Frameless transparent window, letterbox contract, drag rules, fullscreen yield | WIN-1, WIN-2, WIN-4, WIN-5, WIN-7 |
+| `tray.cts` | Tray icon (drawn, not shipped) and menu | WIN-3, INT-7, NFR-9 |
+| `config.ts` | Schema, per-field repair, clamping, atomic write | PRS-1, PRS-4, WIN-9, NFR-11 |
+| `notify.ts` | Toast payload and Windows toast XML | ALM-10, ALM-12 |
+| `notifications.cts`, `tray.cts` | The Electron-facing halves | ALM-11 |
+| `renderer/index.ts` | The widget: binds `WatchController` to the bridge | everything on the face |
+| `styles.css`, `index.html` | The letterbox and the drag regions | WIN-6, WIN-7, WIN-8 |
+| `electron-builder.yml` | NSIS packaging, AppUserModelID pairing | NFR-10 |
+
+**What the archive revealed: the ESM/CommonJS boundary is a real trap, and it is now a convention.**
+`src/main` is CommonJS because Electron is; `src/shared` is ESM because the renderer is a page and the
+tests load it directly. The two meet in three places, and each cost time:
+
+1. `require()` cannot load the ESM `dist/shared/*.js`. So a main-process module may not import `shared`.
+2. A `.cts` file cannot be loaded by the test runner — CommonJS by extension, so the ESM loader refuses
+   it, and `createRequire` refuses the `import` statements inside it.
+3. **The subtle one:** `tsconfig.main.json` with `module: "CommonJS"` **downlevels a dynamic `import()`
+   to `require()`**, which cannot load ESM. The build succeeds, the types are right, and the app dies at
+   startup with `ERR_REQUIRE_ESM`. `module: "Node16"` is what makes a CommonJS main process able to
+   reach an ESM neighbour, and `scripts/verify-widget.mjs` now asserts the emitted form rather than
+   trusting the source.
+
+The resolution is a rule rather than a workaround: **the file extension says which module system a file
+is.** Pure main-process logic goes in `src/main/*.ts` (ESM, Electron-free, unit-tested); Electron-facing
+code goes in `src/main/*.cts`. That is what makes the config schema, the clamping rules and the toast
+payload testable at all — 32 tests that would otherwise have been impossible.
+
+**Two bugs the new tests found in code written the same hour.** `differsFromStored` compared
+`JSON.stringify` output, which preserves key order, so a correctly-formatted settings file was reported
+as damaged. And `ConfigFile.load` ran the repair comparison before the future-version check, so a file
+from a newer build was reported as needing repair when it should simply have been left alone.
+
+**And one in the verifier itself:** the sandbox check built a `RegExp` from `require(`, whose
+unbalanced parenthesis threw *inside the verifier*. A verifier that crashes on its own check is worse
+than no check — the build reports a failure that is not the code's. `RegExp.escape` now does the
+escaping, and the verifier was confirmed to catch a real break by renaming the `#case` element.
+
+## A recurring failure worth recordingAcross M2 and M4 I repeatedly **asserted values from memory instead of computing them**, and every
 single one was wrong:
 
 | Assertion | Reality |
@@ -342,15 +388,23 @@ were mechanical rather than remembered.
 | **A bad config file cannot crash the widget** | An invalid zone asserted not to throw from `faceState()` or `tick()` |
 | **An older config file still loads** | The legacy `selected` field is read, so a rename did not reset every widget's register |
 | **Every catalogue name fits or steps down to its code** | All 49 cities rendered and their glyphs measured |
+| **The config file cannot lose itself** | Twenty successive atomic writes each re-read and parsed; a future-version file refused and left byte-identical |
+| **A window can always be recovered** | Clamping swept over a 6 000-unit grid of positions, asserting a grab handle stays on screen every time |
+| **The toast carries the alarm category** | The `scenario="alarm"` attribute asserted in the XML, since there is no Electron option for it |
+| **The build stays inside the sandbox** | The widget verifier asserts no `require`, `process.env` or `__dirname` reaches the renderer, and that every import resolves |
 | The preview actually works | Build-time verifier: inline script parses, modules resolve, every control id exists |
+| The widget page is wired | Build-time verifier: HTML references files that exist, the entry parses, `main.cjs` keeps its dynamic `import()` |
 
 ## What is *not* verified
 
 - **Colours.** Modelled from product photography; the research could not measure exact values.
 - **Segment proportions and stroke weight.** Authored by eye, never compared to the real watch.
-- **Anything needing a visible window:** dragging, tray, taskbar suppression, always-on-top, resize
-  behaviour, Windows notifications, the audible alarm, the tray menu's keyboard reach (NFR-9). None of
-  it can be exercised here.
+- **The entire running shell.** Window, tray, dragging, taskbar suppression, always-on-top's fullscreen
+  yield, notifications actually appearing, Focus Assist, packaging and the installed app. None of it can
+  be executed here — `docs/ENVIRONMENT.md` §4 explains why and §9 is the sixteen-item checklist for
+  whoever has a desktop.
+- **Whether the notification category works.** The XML is asserted; whether Windows honours it under
+  Focus Assist is not knowable from here.
 - **The rasteriser's own fidelity.** It is an inspection aid, not a source of truth, and it ignores the
   decimal point (emitted as an arc).
 - **The case proportions.** The window is 450 × 445 units where the real case is 450 × 421. It had to
@@ -381,16 +435,21 @@ were mechanical rather than remembered.
 
 ## The next session should start here
 
-**M1 and the rest of M8 — the Electron shell.** Everything that can be verified without a window is
-now done: the battery model, the illumination duration, the context menu's controller half, and the
-per-screen cadence. What remains genuinely needs a desktop where `ELECTRON_RUN_AS_NODE` is not set:
+**Run the shell on a desktop.** Everything that can be built without a window is built, and everything
+that can be tested without one is tested. The next step is not more code — it is
+`docs/ENVIRONMENT.md` §9's sixteen-item checklist on a real machine.
 
-- M1: tray, taskbar and Alt+Tab suppression, always-on-top yielding to fullscreen, position and size
-  persistence, dragging, `-webkit-app-region: no-drag` on the pushers.
-- The shell half of M8: Windows notifications in the alarm category so Focus Assist is respected, the
-  amber wash *in situ*, `electron-builder` packaging, and the 15 acceptance criteria's window ones.
-- NFR-9's accessibility floor for the tray menu.
+Expect problems. The three most likely, in order:
 
-`main.cts` and `preload.cts` are still the M0 scaffold: a frameless transparent window and a `ping`
-bridge. The `WatchController` is ready to drive the renderer, and its `ControllerDeps` seam already
-takes the `now`/`mono`/`setTimer` functions the real event loop supplies.
+1. **Always-on-top will not yield to fullscreen** (item 6). This is the plan's risk R-4, and the code is
+   an acknowledged approximation: Electron exposes no foreground-window handle, so `foregroundLooksFullscreen`
+   uses a proxy. If it misbehaves, the fix is a native `GetForegroundWindow` call, which means the
+   project's first native dependency.
+2. **The toast never appears, or Focus Assist suppresses it** (item 10). Check `app.setAppUserModelId`
+   runs before the first toast, then that `appId` in `electron-builder.yml` matches `APP_USER_MODEL_ID`.
+   §11 of ENVIRONMENT.md is the diagnosis order.
+3. **The window is a transparent rectangle that eats clicks** (item 3). Plan risk R-3. The `no-drag`
+   rules in `styles.css` are the fix if the pushers drag instead of clicking.
+
+After that: colours, segment proportions, and the case ratio — the four things in "Known rough edges"
+that need eyes rather than tests.

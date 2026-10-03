@@ -59,6 +59,21 @@ import {
 } from './time.ts';
 
 /** The face's inputs. The renderer's `DisplayState` is this plus nothing. */
+/**
+ * The face's inputs: everything `renderFace` needs, and nothing else.
+ *
+ * ## Why this is a hand-written mirror of `DisplayState`
+ *
+ * `renderFace` is in the renderer and this is in `shared`, and the dependency rule is one-way — the
+ * renderer bundles `shared`, so `shared` cannot import the renderer's type. The two shapes therefore
+ * have to be kept in step by hand, and the compiler is what enforces it: `index.ts` passes this object
+ * straight to `renderFace`, so a field missing here or named differently is a type error at that call
+ * site rather than a face that silently draws the wrong thing. That is exactly how the omission this
+ * comment replaces was caught — `alarmNumber`, `alerting`, `signalScreen` and `worldIsUtc` were missing,
+ * and `alert` had the wrong name.
+ *
+ * The field order below follows `DisplayState` so the two can be read side by side.
+ */
 export interface FaceState {
 	readonly at: Date;
 	readonly wall: Date;
@@ -80,15 +95,22 @@ export interface FaceState {
 	readonly battery: number;
 	readonly illuminated: boolean;
 	readonly flash: FlashField | null;
-	readonly alert: Alert | null;
+	/** True while an alarm or the countdown is sounding, which drives the face's blink (ALM-8). */
+	readonly alerting: boolean;
 	readonly pressed: readonly Pusher[];
 	readonly chord: boolean;
 	/** The selected illumination duration, shown while its setting field is open (LIT-3). */
 	readonly illuminationMs: number;
 	readonly worldCity: string;
+	/** True when the displayed city is UTC, which the DST field cannot touch (WLD-3). */
+	readonly worldIsUtc: boolean;
+	/** Which of the five alarms the Alarm screen is showing, or null off that screen (DIS-8). */
+	readonly alarmNumber: number | null;
 	readonly alarmHour: number | null;
 	readonly alarmMinute: number | null;
 	readonly alarmMode: 'daily' | 'once' | 'off' | null;
+	/** True when the Alarm screen is showing the hourly-signal screen instead of an alarm (ALM-9). */
+	readonly signalScreen: boolean;
 	readonly timerMs: number | null;
 	readonly timerRunning: boolean;
 	readonly timerSet: { hours: number; minutes: number; seconds: number } | null;
@@ -227,14 +249,21 @@ export class WatchController {
 			battery: this.battery,
 			illuminated: this.isLit(mono),
 			flash: flashingField(state, now),
-			alert: state.alert,
+			// The face wants "is something sounding", not the alert object: the blink is all it draws,
+			// and passing the object would tempt the renderer into deciding what an alert means.
+			alerting: state.alert !== null,
 			pressed: this.gestures.pressed(),
 			chord: this.gestures.activeChord() !== null,
 			illuminationMs: state.illuminationMs,
 			worldCity: worldZone(state),
+			// WLD-3: the DST field is inert for UTC, and the face says so rather than leaving the user to
+			// discover it by pressing ADJUST and watching nothing happen.
+			worldIsUtc: displayedZone === 'Etc/UTC' || displayedZone === 'UTC',
+			alarmNumber: alarm?.id ?? null,
 			alarmHour: alarm?.hour ?? null,
 			alarmMinute: alarm?.minute ?? null,
 			alarmMode: alarm?.mode ?? null,
+			signalScreen: mode === 'alarm' && alarm === null,
 			timerMs: mode === 'timer' ? timerRemaining(state.timer, now) : null,
 			timerRunning: state.timer.running,
 			timerSet: mode === 'timer' && state.edit?.kind === 'timer' ? timerSetParts(timerRemaining(state.timer, now)) : null,
@@ -275,18 +304,19 @@ export class WatchController {
 		return { zone: slotZone(state, register), dst: slotDst(state, register) };
 	}
 
-	private alarmDisplay(): { hour: number; minute: number; mode: 'daily' | 'once' | 'off' } | null {
+	private alarmDisplay(): { id: number; hour: number; minute: number; mode: 'daily' | 'once' | 'off' } | null {
 		const state = this.state;
 		if (state.mode !== 'alarm') {
 			return null;
 		}
 		const slot = alarmSlot(state);
 		if (slot === 0) {
-			// The hourly-signal screen shows the current time, not an alarm time.
+			// The hourly-signal screen shows the current time, not an alarm time — and it is not an
+			// alarm, which is why this returns null rather than a sixth definition with a dummy time.
 			return null;
 		}
 		const def = state.alarms.defs.find((candidate) => candidate.id === slot);
-		return def ? { hour: def.hour, minute: def.minute, mode: def.mode } : null;
+		return def ? { id: def.id, hour: def.hour, minute: def.minute, mode: def.mode } : null;
 	}
 
 	/* ---------------------------------------------------------------------------------------- */

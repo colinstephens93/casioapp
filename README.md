@@ -40,11 +40,12 @@ that works both inside the sandbox and on an ordinary machine. Full explanation 
 Then:
 
 ```sh
-npm test         # 361 unit tests: time, zones, DST, map, glyphs, face, screens, gestures, battery
-npm run build    # compiles main/preload to CommonJS and shared/renderer to ESM, then verifies the preview
+npm test         # 393 unit tests: time, zones, DST, map, glyphs, face, screens, gestures, battery
+npm run build    # compiles main/preload to CommonJS and shared/renderer to ESM, then verifies both pages
 npm run typecheck  # four tsconfigs — the tests cannot see types, so this is not optional
 npm start        # builds, then launches the widget
-npm run watch    # rebuilds shared and renderer on change
+npm run watch    # rebuilds shared, renderer and main on change
+npm run package  # builds, then makes a Windows installer (electron-builder is not installed here)
 ```
 
 ### A trap when launching Electron
@@ -90,29 +91,37 @@ TypeScript itself.
 
 ## Progress
 
-**361 tests passing, typecheck clean on all four configs.** The verifiable core is complete — see
+**393 tests passing, typecheck clean on all four configs.** The verifiable core is complete — see
 [docs/PROGRESS.md](docs/PROGRESS.md) for the history and [docs/HANDOFF.md](docs/HANDOFF.md) for where
 to pick up.
 
 | Area | State |
 |---|---|
-| Toolchain, build, tests | Working; the build self-verifies the preview |
+| Toolchain, build, tests | Working; the build verifies both the preview page and the widget page |
 | Time engine: offsets, wall clock, ±1 day marker, DST, formatting | Built, 35 tests |
 | City catalogue: the watch's 49 codes plus extended offsets | Built, verified against the manual's list |
 | Seven-segment glyph encoding | Built, 18 tests, collisions declared and audited |
 | Case, LCD, world map, analog subdial | Built, **visually verified** |
-| Live state: four registers, DST, persistence | Built |
 | Mode state machine: five screens, every pusher | Built, 69 transition tests |
-| World Time: city scrolling, fast scroll, per-city DST, promotion | Working |
-| Alarm: five alarms, the hourly signal, the test alarm, 10-second alerts | Working |
-| Countdown Timer: 1 s–24 h, pause/resume, absolute-end persistence | Working |
-| Stopwatch: elapsed, split, two finishes, 24-hour rollover | Working |
+| World Time, Alarm, Timer, Stopwatch | Working |
 | Pusher gestures: press, hold at 1/2/3 s, chords, repeats | Working, 25 tests |
 | Auto Display, auto-return, MUTE, flashing setting fields | Working |
-| Battery simulation: drains from real alarm and backlight seconds | Working, calibrated to Casio's rating |
-| Context menu, illumination duration | Working (controller half; the shell supplies the menu) |
+| Battery model, illumination, context menu | Working, calibrated to Casio's rating |
+| Config file: schema, repair, atomic write | Built, 32 tests — `src/main/config.ts` |
 | Browser preview with live controls | Working — open `dist/preview/index.html` |
-| Notifications, tray, packaging | Not built; **cannot be run in the development sandbox** |
+| Electron shell: window, tray, notifications, packaging | **Written, not run.** See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) §9 |
+
+### Running the widget
+
+```sh
+npm start        # builds, then launches
+npm run package  # builds, then electron-builder --win (needs electron-builder installed)
+```
+
+The widget **cannot be launched in the development sandbox** this was built in: DSH runs commands on a
+non-interactive desktop, and Chromium needs the named pipes the sandbox forbids. So the shell is
+written and reviewed but never executed — `docs/ENVIRONMENT.md` §9 lists the sixteen claims a human
+should check on a real machine, ordered by how likely each is to be wrong.
 
 ### Seeing it without running it
 

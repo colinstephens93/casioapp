@@ -1,8 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    // Node16 rather than plain CommonJS, and the reason is a single construct: `main.cts` reaches its
+    // pure ESM modules with a dynamic `import()`, and plain `module: "CommonJS"` **downlevels that to
+    // `require()`** — which cannot load an ESM file at all. Emulated Node16 resolves `./config.js` to
+    // `./config.ts` and leaves the `import()` alone, which is what makes a CommonJS main process able
+    // to reach the ESM half. `erasableSyntaxOnly` still applies.
+    "module": "Node16",
+    "moduleResolution": "Node16",
     "lib": ["ES2022", "DOM"],
     "outDir": "dist",
     "rootDir": "src",

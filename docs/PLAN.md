@@ -12,16 +12,33 @@ Everything after M3 is independently useful, so the widget is demonstrable long 
 | Milestone | Theme | Requirements | Size | Demonstrable result |
 |---|---|---|---|---|
 | M0 | Toolchain gate and repo scaffold | NFR-1, NFR-6, NFR-10, NFR-11 | S | `npm start` opens an empty frameless window |
-| M1 | Window citizenship, tray, persistence | WIN-1…WIN-10, PRS-1, PRS-4 | M | A draggable transparent box that survives restart |
+| M1 | Window citizenship, tray, persistence | WIN-1…WIN-10, PRS-1, PRS-4 | M | **Written, not run.** See ENVIRONMENT.md §9 |
 | M2 | The shell: case and LCD | DIS-1…DIS-9, DAT-3, BR-1, BR-2 | L | A convincing blank watch you can resize |
 | M3 | Time engine | ZON-1…ZON-8, DST-1…DST-6, PRS-5, DAT-1, NFR-3, NFR-7 | M | Correct offsets and DST, unit-tested, no UI |
 | M4 | Timekeeping, subdial, world map | TIM-1…TIM-12, ANA-1…ANA-5, MAP-1…MAP-7, DAT-2, DAT-4 | L | A working world clock on screen |
 | M5 | World Time and Multi Time | WLD-1…WLD-5, MOD-1…MOD-6 | M | **Done.** All four registers, band follows the city |
 | M6 | Alarm, Timer, Stopwatch | ALM-1…ALM-12, TMR-1…TMR-8, SW-1…SW-10 | L | **Done.** All five screens functional |
 | M7 | Interaction fidelity | INT-1…INT-8, MUT-1…MUT-3, TIM-4…TIM-11, ALM-4 | M | **Done.** Hold, chord, flashing fields, mute, Auto Display |
-| M8 | Battery, illumination, polish, packaging | BAT-1…BAT-6, LIT-1…LIT-4, NFR-4, NFR-8, NFR-9 | M | Shippable installer |
+| M8 | Battery, illumination, polish, packaging | BAT-1…BAT-6, LIT-1…LIT-4, NFR-4, NFR-8, NFR-9 | M | **Battery, illumination and packaging written; the window half needs a desktop** |
 
 Sizes are relative effort, not calendar time.
+
+### What M1 and M8 turned out to be
+
+Both are now written. Both are also the first work in the project that **cannot be executed in the
+sandbox at all**, which changes what "done" can mean for them: done means reviewed, typechecked,
+verified as far as static analysis reaches, and shipped with a checklist. `docs/ENVIRONMENT.md` §9 is
+that checklist — sixteen claims, each with its requirement and how to check it.
+
+One architectural note that was not foreseeable when this plan was written. The plan's decision 1 puts
+the split between "renderer owns drawing and the state machine" and "main owns the window, tray,
+notifications and config". That is right, but it left open *how* the two halves share code — and they
+cannot: `src/shared` compiles to ESM for the renderer, and the main process is CommonJS. The resolution
+is that the file extension declares the module system, and pure main-process logic lives in
+`src/main/*.ts` (ESM, Electron-free, unit-tested) while the Electron-facing code lives in
+`src/main/*.cts`. That is why the config schema and the notification payload are tested at all. See
+HANDOFF.md §5.
+
 
 ### What M5–M7 actually delivered, and where it differs from the plan above
 
@@ -203,7 +220,7 @@ Lift `time.ts` and the band maths from the reference project (MIT, attributed), 
 
 **Exit criteria:** four registers all reachable and correct; the map band and the day marker follow.
 
-### M6 — Alarm, Timer, Stopwatch — **done, except the notification**
+### M6 — Alarm, Timer, Stopwatch — **done**
 
 - Five alarms plus the hourly signal; Daily/One-time/Off cycle; auto-arm on entering settings; test alarm
   on hold; 10-second sound stopping on any button; flashing indicator in all modes (ALM-1…ALM-9).
@@ -217,7 +234,7 @@ Lift `time.ts` and the band maths from the reference project (MIT, attributed), 
 
 **Exit criteria:** a real alarm fires a Windows notification; a countdown survives a mid-flight restart.
 
-### M7 — Interaction fidelity — **done, except the context menu**
+### M7 — Interaction fidelity — **done**
 
 - Press, hold and chord recognition, with visible pressed state and visible chord state (INT-4, INT-8).
 - The exact hold durations: ~1 s, ~2 s, ~3 s (INT-5).
@@ -232,18 +249,27 @@ Lift `time.ts` and the band maths from the reference project (MIT, attributed), 
 **Exit criteria:** every gesture in §6 of the requirements is demonstrable and, where logic-only,
 unit-tested in the state machine.
 
-### M8 — Battery, illumination, polish, packaging
+### M8 — Battery, illumination, polish, packaging — **battery and illumination done; packaging written**
 
 - Simulated battery: 100% start, drain from actual alarm-sound and backlight seconds, calibrated to
   Casio's 10 s + 1.5 s per day over 10 years, persisted and displayed, resettable (BAT-1…BAT-6, LIT-1,
-  LIT-3).
+  LIT-3). **Done**, with the calibration derived independently in the test rather than imported.
 - Amber illumination wash at the selectable 1.5 s / 3 s duration, feeding the battery (LIT-2, LIT-4).
-- Performance pass to meet the idle budget; confirm no idle repaint (NFR-4).
-- Accessibility floor: pusher labels, keyboard-reachable tray menu (NFR-9).
+  **Done** except the wash *in situ*, which needs a screen.
+- Performance pass to meet the idle budget; confirm no idle repaint (NFR-4). **Partially**: the wake
+  rate is asserted per screen, and the redraw cost is not measured — see PROGRESS.md's "What is not
+  verified".
+- Accessibility floor: pusher labels, keyboard-reachable tray menu (NFR-9). **Done** as far as the code
+  goes; whether the native menu really is keyboard-reachable on Windows is a desktop check.
 - Package with `electron-builder` for Windows; confirm the known ~150 MB size is acceptable (NFR-1).
-- Write `docs/RESEARCH.md` with the watch citations, then finalise `README.md`.
+  **Written, not run** — `electron-builder.yml`, with `npm run package` wired up. The tool is
+  deliberately not a dependency, because the sandbox cannot install it.
+- Write `docs/RESEARCH.md` with the watch citations, then finalise `README.md`. **Done**, with the case
+  proportion correction recorded in RESEARCH.md §6.
 
-**Exit criteria:** a shippable installer; all 15 acceptance criteria in the requirements pass.
+**Exit criteria:** a shippable installer; all 15 acceptance criteria in the requirements pass. **Not
+met here and not meetable here** — it needs a desktop. What is met is that every part is written,
+typechecked, and accompanied by a check, and `docs/ENVIRONMENT.md` §9 says exactly what to verify.
 
 ## 4. Test strategy
 

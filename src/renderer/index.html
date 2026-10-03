@@ -10,7 +10,12 @@
 		<link rel="stylesheet" href="./styles.css" />
 	</head>
 	<body>
-		<div id="root"></div>
+		<!--
+			The case is a wrapper element rather than the SVG itself, because the letterbox maths belongs
+			to the wrapper: the SVG is drawn in the case's own coordinate system at whatever size the
+			wrapper gives it. See `styles.css` for the aspect ratio and the drag rules.
+		-->
+		<div id="root"><div class="case" id="case"></div></div>
 		<script type="module" src="./index.js"></script>
 	</body>
 </html>

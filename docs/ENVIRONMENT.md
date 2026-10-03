@@ -164,3 +164,69 @@ None of these are visible in markup and all are obvious in a picture.
   resizing behaviour, the amber backlight wash in situ.
 - Windows notifications actually appearing.
 - Real Electron integration at all.
+
+Note that this list has *shrunk* rather than grown: the config schema, its repair and its atomic write,
+the window-clamping rules, and the notification payload are all now tested here, because they were
+written as pure modules with no Electron import. See §10.
+
+## 9. The Electron shell: what a human must check on a real desktop
+
+The shell is written and reviewed, not run. Everything below is a claim the code makes that this
+sandbox cannot confirm. It is ordered by how likely it is to be wrong, not by how important it is.
+
+| # | Claim | Requirement | How to check |
+|---|---|---|---|
+| 1 | The widget launches at all | NFR-1 | `npm start` on a desktop where `ELECTRON_RUN_AS_NODE` is unset |
+| 2 | It is frameless, transparent, and shows the case | WIN-1, WIN-7 | Look at it. A transparent window with no GPU compositing renders black, which is why `enable-transparent-visuals` is set |
+| 3 | Dragging by the case works, and clicking a pusher does not drag | WIN-2, R-2 | Drag the case; then click each pusher. A pusher that drags means a `no-drag` rule is missing |
+| 4 | A tray icon appears with a working menu | WIN-3 | Right-click the tray; toggle Show/Hide; the label must flip |
+| 5 | No taskbar entry, and no Alt+Tab entry | WIN-4 | `skipTaskbar` covers the first; Alt+Tab is the one that surprises |
+| 6 | Always-on-top yields to a fullscreen app | WIN-5, R-4 | Start a fullscreen film or game. **This is the least certain claim in the project**: Electron exposes no foreground-window handle, so `foregroundLooksFullscreen` uses the "display has no work area" proxy. An auto-hidden taskbar triggers it too |
+| 7 | Resizing letterboxes rather than distorting | WIN-6, WIN-7, WIN-8 | Drag the window very wide, then very tall. The case must keep 450:445 and stay centred |
+| 8 | Position and size survive a restart | WIN-9 | Move and resize, quit from the tray, relaunch |
+| 9 | A window on a disconnected monitor is recoverable | WIN-9 | Move it to a second display, unplug that display, relaunch. The tray's *Reset window position* is the manual path; `clampToWorkAreas` is the automatic one |
+| 10 | An alarm raises a toast that Focus Assist respects | ALM-10 | Set an alarm a minute out. Then turn Focus Assist on and repeat. The `alarm` scenario should still get through — see §11 |
+| 11 | The on-face blink carries the alarm when the toast does not | ALM-11 | Deny notification permission in Windows settings and set an alarm |
+| 12 | Clicking the toast raises the widget | ALM-10 | Hide to tray, set an alarm, click the toast |
+| 13 | The context menu appears on a case right-click | INT-7 | Right-click the case. *Settings…* should reveal the config file in Explorer |
+| 14 | The tray menu is keyboard-reachable | NFR-9 | Tab and arrow keys through the tray menu. This is the accessibility floor, since the rest of the widget is mouse-only by requirement |
+| 15 | `npm run package` produces an installer that installs and runs | NFR-10 | `npm install electron-builder` first — it is deliberately not a dependency, see §2 |
+| 16 | The installed shortcut carries the AppUserModelID | ALM-10 | Check `appId` in `electron-builder.yml` matches `APP_USER_MODEL_ID` in `src/main/notify.ts`. A mismatch silently attributes the toast to `electron.exe` |
+
+Items 6, 10 and 16 are the three where I would expect a problem, and item 6 is where the code is
+explicitly an approximation rather than an implementation.
+
+## 10. Why so much of the shell *is* tested here
+
+The main process is CommonJS and cannot be loaded in this sandbox. That does not mean none of it can be
+tested — it means the split has to be deliberate. `src/main` therefore holds two kinds of file:
+
+| Extension | Module system | Imports | Tested? |
+|---|---|---|---|
+| `.cts` | CommonJS, compiled by `tsc` | Electron, and Node built-ins | **No.** Cannot be loaded here at all |
+| `.ts` | ESM, compiled by the in-process transpiler | Node built-ins only | **Yes**, directly, with no build step |
+
+The config schema, its per-field repair, the atomic write, the window-clamping rules and the
+notification payload all live in `.ts` files, and `test/shell.test.ts` covers them — 32 tests. What is
+left is the part whose only job is to call Electron.
+
+**The boundary is load-bearing and easy to break.** A CommonJS file reaching an ESM one needs a dynamic
+`import()` and a `resolution-mode` attribute on the type-only imports; see HANDOFF.md §5 for the details
+and for why `tsconfig.main.json` sets `module: Node16` rather than `CommonJS`.
+
+## 11. The notification scenario is a Windows toast XML attribute
+
+Requirement ALM-10 asks for the notification to be "registered in the alarm category so Focus Assist is
+respected". There is no `scenario` option on Electron's `Notification` — the property does not exist in
+Electron's typings, and setting it is silently ignored. The category is an attribute of the **Windows
+toast XML**, which Electron forwards verbatim through `toastXml`.
+
+So the toast is built as XML in `src/main/notify.ts`, and `test/shell.test.ts` asserts the attribute is
+present rather than trusting a caller to include it. The `<actions>` element is the other
+non-decorative part: Windows expires a toast with nothing to act on, and an alarm should stay until it
+is dismissed.
+
+If the toast never appears on a real desktop, the things to check, in order: that
+`app.setAppUserModelId` ran before the first toast; that `appId` in `electron-builder.yml` matches
+`APP_USER_MODEL_ID`; and that Windows' notification settings allow the app at all — Focus Assist's
+*priority* list is what the `alarm` scenario works around, not a blanket denial.
