@@ -1,8 +1,20 @@
 # Requirements — Casio AE-1200WH Desktop Clock Widget
 
-Status: **Draft for approval.** Everything below was settled in a requirements interview; nothing here is
-implemented yet. Working directory name is `casioapp`; `royale` is the placeholder product name (see
-BR-3) and can be vetoed at any time.
+Status: **original specification, largely built, and no longer what the shortcut opens.**
+
+Everything below was settled in a requirements interview for a frameless Electron replica of the
+AE-1200WH. The time engine, the five screens, the pushers, the simulated battery, and the SVG face are
+implemented and tested. The desktop shortcut now opens a Timan-style world-time board in Edge
+(`World time.vbs`, `src/renderer/board.ts`, `src/shared/desk.ts`). That board is a later decision. It
+is described in [README.md](../README.md) and [NEXT-SESSION.md](NEXT-SESSION.md). The IDs below still
+name the watch-face work.
+
+The board also does two things §9 listed as out of scope for the watch widget: it can show the
+operating-system battery when the browser exposes `navigator.getBattery`, and it has keyboard
+shortcuts. The simulated 10-year cell remains the watch controller's.
+
+Working directory name is `casioapp`. `royale` is still the placeholder product name in
+`electron-builder.yml` and `APP_USER_MODEL_ID` (see BR-3).
 
 Source of authority for watch behaviour: Casio *Operation Guide 3198/3299* (manual code MA1205-EA) and
 the AE-1200WH city code table, as reproduced by three independent manual archives and an authorised
@@ -283,8 +295,8 @@ because its renderer is ANSI terminal escape codes and box-drawing characters.
 | Source module | Decision | Why |
 |---|---|---|
 | `src/time.ts` | **Reuse** | Written against standard `Intl`. Handles offsets, wall clock, civil-day difference, DST override, ICU renames. Verified free of Node-only APIs. |
-| `src/catalog.ts` | **Reuse as a starting point** | 39 curated entries covering −11:00…+14:00 including fractional offsets. Must be **extended** to the watch's full 46-code table. |
-| `src/world.ts` | **Reuse the data** | 480-byte 96×40 Natural Earth bitset, committed with its generator. |
+| `src/catalog.ts` | **Reuse as a starting point** | 39 curated entries covering −11:00…+14:00 including fractional offsets. Extended, in `src/shared/catalog.ts`, to the watch's 49-code table. The "46-code" figure in this row was the interview's count and was corrected in [RESEARCH.md](RESEARCH.md) §5. |
+| `src/world.ts` | **Reuse the data** | 480-byte 96×40 Natural Earth bitset. It lives inline in `src/shared/map.ts` as `WORLD_BASE64`. The board samples it to 64×16. |
 | `bandColumn` / `bandColumns` | **Reuse the maths** | Pure offset→column mapping. |
 | `worldmap.ts`, `braille.ts`, `lcd.ts`, `digital.ts`, `panel.ts`, `theme.ts`, `table.ts`, `tui.ts`, `main.ts` | **Do not reuse** | Terminal-specific rendering and layout. |
 
@@ -338,17 +350,19 @@ The widget is accepted when all of the following are true:
 | Resize | Free resize, letterboxed, case-coloured fill | Aspect-locked; layered extra detail |
 | Window citizenship | Tray only, no taskbar, no Alt+Tab | Normal app window |
 | Always-on-top | Yes, but not over fullscreen | Above everything; never |
-| Zones | Watch's 46 codes on the face, IANA behind, extended offsets kept | Watch's fixed table only |
+| Zones | The watch's city table on the face (49 codes; the interview's 46 was corrected in RESEARCH.md §5), IANA behind, extended offsets kept | Watch's fixed table only |
 | DST | Manual per city, `auto` as documented extension, default `off` | IANA auto only; manual only |
 | Battery | Real simulation drained by actual use | Printed decoration; real OS battery |
 | Backlight | Amber wash, 1.5 s / 3 s, feeds battery | No backlight |
 | Persistence | Settings persist; stopwatch resets; timer uses absolute end time | Everything persists; nothing persists |
 | Interaction | Mouse-only via rendered pushers | Keyboard shortcuts; settings panel |
-| Naming | Neutral name, no Casio logo, disclaimer | Casio-branded |
+| Naming | Neutral name, no Casio logo image, disclaimer. The word CASIO is case print (BR-1) and the board's corner label | Casio-branded product |
+| Later, 2026-10 | The shortcut opens a world-time board in Edge | Shipping the AE-1200 face as the desktop window |
 
 ## 9. Explicitly out of scope
 
-Not in v1, and not to be built without a new decision:
+Not in v1 of the watch widget, and not to be built there without a new decision. The world-time board
+later did items 1 and 8. That decision is the 2026-10 row in §8. The watch face still follows this list.
 
 1. Real system battery or uptime readout in the `10 YEAR BATTERY` position.
 2. Stopwatch lap memory, lap counter or recall — the watch has none.
@@ -367,8 +381,8 @@ Not in v1, and not to be built without a new decision:
 
 | ID | Item | Impact |
 |---|---|---|
-| OI-1 | Product name is a placeholder (`royale`). | Cosmetic; blocks packaging and any distribution. |
-| OI-2 | Exact LCD, case and accent colours are described by appearance, not measured. | Needs a colour pass against good reference photography. |
+| OI-1 | Product name is a placeholder (`royale`), still the installer `appId` and `APP_USER_MODEL_ID`. | Changing it after an install is a migration. |
+| OI-2 | Face colours were measured from two photographs and stored in `THEME`. See [RESEARCH.md](RESEARCH.md) §7. They remain appearance measurements. The board uses the Timan palette. | A further face pass is one edit per token. |
 | OI-3 | Printed typeface is unidentified. | Case lettering is reproduced as drawn SVG, so the face is unaffected. |
 | OI-4 | Module number is 3198 or 3299 depending on market; procedures are identical. | None functionally. |
-| OI-5 | Sandbox HTTPS egress is broken, so `npm install` may fail here. | Could block the build in this environment. See [PLAN.md](PLAN.md) risks. |
+| OI-5 | Sandbox HTTPS egress was a risk. `npm install` works with the workspace cache in `.npmrc`. Install scripts still cannot run here. | See [ENVIRONMENT.md](ENVIRONMENT.md) §1 and §2. |

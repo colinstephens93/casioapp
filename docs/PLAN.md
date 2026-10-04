@@ -1,7 +1,15 @@
 # Development Plan — Casio AE-1200WH Desktop Clock Widget
 
-Companion to [REQUIREMENTS.md](REQUIREMENTS.md). Every task below traces to requirement IDs; nothing here
-should be built that those requirements do not ask for.
+Companion to [REQUIREMENTS.md](REQUIREMENTS.md). Every task below traces to requirement IDs.
+
+This plan is the build sequence for the AE-1200 widget. That work is largely done: the face, the five
+screens, and the Electron shell are written, and the shell has not opened a window on this PC. The
+desktop shortcut now opens a world-time board, which [REQUIREMENTS.md](REQUIREMENTS.md) §9 had left
+out of scope (a world-time-only window, keyboard shortcuts, and the operating-system battery). That
+later decision is recorded in the requirements' decisions table and in [NEXT-SESSION.md](NEXT-SESSION.md).
+Read the plan as the history of the watch-face milestones. The definition of done in §6 is the
+original ship bar, and it is not met: there is no installer that has been run, and the shortcut is
+Edge rather than the tray-only Electron window.
 
 ## 1. How this plan is organised
 

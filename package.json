@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Desktop clock widget modelled on the Casio AE-1200WH (module 3198).",
+  "description": "Desktop world-time widget. The shortcut opens a Timan-style board; the AE-1200WH face is the preview page.",
   "main": "dist/main/main.cjs",
   "scripts": {
     "fetch:electron": "node scripts/fetch-electron.mjs",

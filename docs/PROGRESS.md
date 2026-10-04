@@ -3,24 +3,24 @@
 A chronological record of what has been built, what was learned, and what is verified. Written for
 someone picking this up cold. For *how to work on it*, see [HANDOFF.md](HANDOFF.md).
 
-Last updated: after the desktop-testing session of 2026-10-03.
+Last updated: 2026-10-04, when the documents were checked against the tree. The history below
+keeps the numbers each session reported. The table at the top is the current suite.
 
-> **Starting fresh? Read [NEXT-SESSION.md](NEXT-SESSION.md) first.** It is short, current, and says what
-> to do next. This file is the history.
+> **Starting fresh? Read [NEXT-SESSION.md](NEXT-SESSION.md) first.** It says what the window is now.
+> This file is the history.
 
 ## At a glance
 
 | Metric | Value |
 |---|---|
-| Tests | **429 passing**, 0 failing, across 93 suites and 14 files |
-| Typecheck | Clean on all four `tsconfig` files, including the Electron main process |
-| Build | Clean, single pass, and self-verifying: it verifies the preview page *and* the widget page |
-| Screens | All five (Timekeeping, World Time, Alarm, Timer, Stopwatch) plus six setting screens |
-| Shell | Written and its wiring tested against a fake Electron — **but never executed.** ENVIRONMENT.md §9 is the checklist |
-| Colour fidelity | **Wrong at the case level**: the widget is black, the real watch is brushed silver. See the last section |
-| Can the watch run? | **Not yet tried.** The launcher was broken until this session |
+| Tests | **439 passing**, 0 failing, across 94 suites and 15 files (`npm test`, 2026-10-04) |
+| Typecheck | Clean on all four `tsconfig` files (`npm run check`, 2026-10-04) |
+| Build | Clean. The build verifies the preview page and `widget.html` |
+| Window | The world-time board, opened by `World time.vbs` in Edge. The five watch screens are the preview face |
+| Shell | Electron is written and its wiring is tested against a fake. On this PC the process exits before a window appears. ENVIRONMENT.md §9 is the Electron checklist |
+| Face colours | Measured and stored in `THEME`. RESEARCH.md §7. The board uses the Timan palette in `board.ts` and `styles.css` |
 | Verify everything | `npm run check` — typecheck, build, tests |
-| Git | Committed through this session; `docs/NEXT-SESSION.md` lists what remains |
+| Git | 11 commits. Tip before this documentation pass: `e5c99c7` |
 
 ### Test breakdown
 
@@ -30,16 +30,21 @@ Last updated: after the desktop-testing session of 2026-10-03.
 | `test/watch.test.ts` | 10 | The zone-and-clock derivation: offsets, gap, day marker, DST label move together |
 | `test/face.test.ts` | 52 | Face composition, layout bounds, glyph overlap, glyph overflow, name fitting |
 | `test/map.test.ts` | 28 | Land bitset, band placement, Home City fallback, fitting |
-| `test/machine.test.ts` | 69 | Every pusher on every screen: press, hold and chord; the five screens' rules |
-| `test/alarms.test.ts` | 18 | The five alarms, the crossing test, the midnight and DST cases, repair |
+| `test/machine.test.ts` | 72 | Every pusher on every screen: press, hold and chord; the five screens' rules |
+| `test/alarms.test.ts` | 19 | The five alarms, the crossing test, the midnight and DST cases, repair |
 | `test/timer.test.ts` | 23 | The countdown against an injected clock, pause/resume, rollover, persistence |
 | `test/stopwatch.test.ts` | 18 | The three behaviours, the 24-hour rollover, formatting |
 | `test/gestures.test.ts` | 25 | Press, hold at each real duration, chord, repeat cadence |
-| `test/controller.test.ts` | 62 | Cadence, the battery model, the seconds reset, restart, notifications, the host's controls |
+| `test/controller.test.ts` | 50 | Cadence, the battery model, the seconds reset, restart, notifications, the host's controls |
 | `test/shell.test.ts` | 37 | The config schema, its repair, the atomic write, window clamping, the toast payload and XML |
 | `test/wiring.test.ts` | 23 | The built shell against a fake Electron: window options, tray menu, notification, IPC surface, boot |
 | `test/catalog.test.ts` | 19 | The watch's 49-code table, extended zones, sorting and exclusion |
 | `test/glyphs.test.ts` | 18 | Glyph coverage, digit uniqueness, collision audit |
+| `test/desk.test.ts` | 10 | The board: defaults, favourites, DST, the clock, and the markup `renderBoard` emits |
+
+Counts are `it()` calls, and they match the runner's `tests 439`. An older copy of this table said 429
+and its per-file column did not add up to that. The narrative sections below keep the count the session
+that wrote them had just run.
 
 ## Milestones
 
@@ -57,9 +62,12 @@ launched there**. Three environment traps were found and solved; all are documen
 3. `ELECTRON_RUN_AS_NODE=1` is set in this session, so `electron.exe` runs as plain Node and
    `require('electron')` returns a *path string*. `scripts/run.mjs` clears it.
 
-Electron itself is installed and reports **v24.15.0**, and the main process is scaffolded, but it
-cannot open a window here: DSH runs commands on a non-interactive desktop (Notepad gets
-`MainWindowHandle = 0`), and Chromium additionally needs the named pipes the sandbox forbids.
+Electron was reported as **v24.15.0** when this milestone was written. The binary installed on
+2026-10-04 is **40.10.6** (`node_modules/electron`, `package.json` asks for `^40.0.0`). The main
+process is scaffolded. It still cannot open a window here: DSH runs commands on a non-interactive
+desktop (Notepad gets `MainWindowHandle = 0`), and Chromium additionally needs the named pipes the
+sandbox forbids. On the interactive PC the same binary exits before a window appears; `World time.vbs`
+records that and opens Edge instead.
 
 ### M3 — Time engine — **done**
 
@@ -304,8 +312,11 @@ field.
 
 ### The Electron shell — **written, not run**
 
-M1 and M8's window half. Nine source files, 32 tests, and a verifier — but the honest summary is that
-this is the first substantial block of work in the project that **cannot be executed here at all**.
+M1 and M8's window half. The shell tests are now 37 in `test/shell.test.ts` plus 23 in
+`test/wiring.test.ts` (this section originally said 32, which was `shell.test.ts` at the time). The
+honest summary is unchanged: this block **cannot be executed in the sandbox**, and on this PC
+`electron.exe` exits before a window appears. The shortcut uses Edge. See the section at the end of
+this file.
 
 | Piece | What it does | Requirement |
 |---|---|---|
@@ -315,8 +326,8 @@ this is the first substantial block of work in the project that **cannot be exec
 | `config.ts` | Schema, per-field repair, clamping, atomic write | PRS-1, PRS-4, WIN-9, NFR-11 |
 | `notify.ts` | Toast payload and Windows toast XML | ALM-10, ALM-12 |
 | `notifications.cts`, `tray.cts` | The Electron-facing halves | ALM-11 |
-| `renderer/index.ts` | The widget: binds `WatchController` to the bridge | everything on the face |
-| `styles.css`, `index.html` | The letterbox and the drag regions | WIN-6, WIN-7, WIN-8 |
+| `renderer/index.ts` | The widget page. It now paints the world-time board. With a bridge it saves to the config file; in Edge it uses `localStorage` | the board |
+| `styles.css`, `index.html` | The board's layout and drag regions. Electron still loads `index.html`; the shortcut loads `widget.html` | the window |
 | `electron-builder.yml` | NSIS packaging, AppUserModelID pairing | NFR-10 |
 
 **What the archive revealed: the ESM/CommonJS boundary is a real trap, and it is now a convention.**
@@ -335,7 +346,7 @@ tests load it directly. The two meet in three places, and each cost time:
 The resolution is a rule rather than a workaround: **the file extension says which module system a file
 is.** Pure main-process logic goes in `src/main/*.ts` (ESM, Electron-free, unit-tested); Electron-facing
 code goes in `src/main/*.cts`. That is what makes the config schema, the clamping rules and the toast
-payload testable at all — 32 tests that would otherwise have been impossible.
+payload testable at all. `test/shell.test.ts` now holds 37 of those tests.
 
 **Two bugs the new tests found in code written the same hour.** `differsFromStored` compared
 `JSON.stringify` output, which preserves key order, so a correctly-formatted settings file was reported
@@ -410,7 +421,9 @@ populated directory under `src/` is watched, that every non-script asset `index.
 from `copyStatic`, deleting the widget-verifier call, and reverting the module setting — and all four
 were caught.
 
-## A recurring failure worth recordingAcross M2 and M4 I repeatedly **asserted values from memory instead of computing them**, and every
+## A recurring failure worth recording
+
+Across M2 and M4 I repeatedly **asserted values from memory instead of computing them**, and every
 single one was wrong:
 
 | Assertion | Reality |
@@ -467,7 +480,9 @@ were mechanical rather than remembered.
 
 ## What is *not* verified
 
-- **Colours.** Modelled from product photography; the research could not measure exact values.
+- **Whether the measured face matches the photographs to a human's eye.** The tokens in `THEME` were
+  measured after this list was written (RESEARCH.md §7). The sandbox still cannot screenshot a browser.
+  The board uses a separate palette.
 - **Segment proportions and stroke weight.** Authored by eye, never compared to the real watch.
 - **The entire running shell.** Window, tray, dragging, taskbar suppression, always-on-top's fullscreen
   yield, notifications actually appearing, Focus Assist, packaging and the installed app. None of it can
@@ -504,13 +519,17 @@ were mechanical rather than remembered.
   not fit one row of a 340-unit LCD at a readable size, and the real module makes the same trade.
 - `SIG` on the LCD is visually near the case's printed `SEARCH` label.
 - `royale` is still a placeholder product name and appears in packaging metadata.
-- Colours live in `THEME` in `theme.ts` for exactly this reason: a colour pass is one edit per token.
+- Face colours live in `THEME` in `theme.ts`. The pass that filled them in is recorded in RESEARCH.md §7.
+  The board's colours are separate literals.
 
 ## The next session should start here
 
-**Run the shell on a desktop.** Everything that can be built without a window is built, and everything
-that can be tested without one is tested. The next step is not more code — it is
-`docs/ENVIRONMENT.md` §9's sixteen-item checklist on a real machine.
+This heading is the close of the shell session. The window has since become the world-time board, and
+[NEXT-SESSION.md](NEXT-SESSION.md) is the current resume. The Electron checklist below is still unmet:
+`electron.exe` 40.10.6 exits on this PC before a window appears, and `World time.vbs` opens the board
+in Edge instead.
+
+**The Electron shell, when it can be run,** is `docs/ENVIRONMENT.md` §9's sixteen-item checklist.
 
 Expect problems. The three most likely, in order:
 
@@ -528,10 +547,12 @@ After that: colours, segment proportions, and the case ratio — the four things
 that need eyes rather than tests.
 
 
-## The desktop session: the face had no stylesheet, and the watch is the wrong colour
+## The desktop session: the face had no stylesheet, and the watch was the wrong colour
 
 The first time any of this was looked at in a real browser. Two findings, and the second is larger than
-the first.
+the first. A later colour pass measured the steel palette into `THEME` (see the correction in
+RESEARCH.md §7). After that, the shortcut's window became the world-time board. The paragraphs below
+are the session as it stood.
 
 ### The stylesheet never reached the SVG
 
@@ -572,7 +593,8 @@ window, a silver subdial with dark markings, and a discrete framed map panel.
 What is built is a black plastic-looking watch with gold lettering and a large pale-green LCD. The single
 thing a person recognises about this watch — that it is a silver steel Casio — is absent. This was parked
 as a subjective "I don't like the design" earlier in the session and should not have been: it is a
-fidelity defect, and the reference photograph settles it. See `docs/NEXT-SESSION.md` §2.
+fidelity defect, and the reference photograph settles it. The measured palette that followed is in
+RESEARCH.md §7. `docs/NEXT-SESSION.md` no longer uses this session's section numbers.
 
 ### Three times a tool agreed with itself instead of with reality
 
@@ -598,3 +620,18 @@ the font from width alone and the watermark ate the entire picture.
 `main.cjs`. `npm start` therefore failed on its existsSync check and told the user to run `npm run build`
 immediately after the build had succeeded. Fixed, and `test/shell.test.ts` now asserts that the launcher,
 `package.json`'s `main`, and the build all agree.
+
+## The window became the world-time board
+
+After the colour pass, the page the shortcut opens stopped being the watch face.
+
+- `src/renderer/board.ts` draws the Timan arrangement as HTML: analog, 64×16 map, city, block digits,
+  zone list, and a `CASIO` label at the top right.
+- `src/shared/desk.ts` holds T0 plus up to nine favourites. `test/desk.test.ts` covers it (10 tests).
+- `src/renderer/index.ts` paints that board. With an Electron bridge it saves through the config file.
+  The Edge shortcut has no bridge, so it uses `localStorage` key `worldtime.desk`.
+- `World time.vbs` opens `dist/renderer/widget.html` in Edge app mode. `scripts/bundle-preview.mjs`
+  writes that file as one classic script, because Edge blocks the module page on `file://`.
+- The watch face, the five screens, and `THEME` remain the preview at `dist/preview/index.html`.
+
+`npm test` on 2026-10-04: 439 passed, 94 suites, 15 files.

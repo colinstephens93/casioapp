@@ -229,15 +229,16 @@ layout as: **A = ADJUST**, **B = LIGHT**, **C = MODE**, **D = SEARCH**.
 > BJS TPE SEL TYO ADL GUM SYD NOU WLG
 > ```
 >
-> That is **49 entries** and it includes `ATH`, `SEN` and `DUB`, which the narrative count had
-> folded into a single "Athens +2" row. The catalogue is verified to match this list **exactly —
+> That is **49 entries**. `ATH` is its own code. `SEN` and `DUB` are not codes in this table or in
+> `src/shared/catalog.ts`; an earlier draft of this paragraph named them as if the mechanical list
+> contained them. The catalogue is verified to match this list **exactly —
 > no missing codes, no extras**, and `npm test` enforces that as a deep equality rather than a
 > narrative count.
 >
 > Note that "48 cities" is therefore **correct after all** as a count of city codes; what remains
 > unresolved is only the "31 time zones" half of Casio's claim, since the table's referenced
-> standard offsets cover roughly 29–30 distinct values depending on how `ATH`/`SEN`/`DUB` are
-> counted. Requirement `ZON-2` still applies: model the table as data, compute the size, and never
+> standard offsets cover roughly 29–30 distinct values depending on how the shared +2 and +8
+> rows are counted. `SEN` and `DUB` are not rows in the table. Requirement `ZON-2` still applies: model the table as data, compute the size, and never
 > assert 48/31 from the manual.
 
 Note that `+5.75` renders as `+05:45`, and the table's maximum is `+12`, so the watch cannot display
@@ -429,8 +430,8 @@ T-1…T-4, `MUTE`/`ALM`/`SIG` icons, and a dedicated city-code field — plus th
 |---|---|---|
 | 1 | No Casio-hosted page could be opened (403 on `casio.com`; PDFs unfetchable; shell HTTPS egress broken). | All Casio-official text is via verbatim reproductions of MA1205-EA. |
 | 2 | The literal mode-cycle arrows on manual page E-4 (raster). | Order inferred from the manual's own section order — high confidence, not transcribed. |
-| 3 | Exact LCD hex colours, printed typeface, and the exact caseback engraving wording. | Colour is a modelled approximation (`OI-2`); the face is drawn SVG, so typeface does not apply. |
-| 4 | Casio's "48 cities / 31 time zones" claim versus the 46 codes + UTC / 30 offsets actually printed. | Model the table as data (`ZON-2`); do not assert 48/31. |
+| 3 | Exact LCD hex colours, printed typeface, and the exact caseback engraving wording. | §7 has since measured appearance colours from two photographs and `THEME` uses them. They are still appearance, not a Casio specification (`OI-2`). The face is drawn SVG, so typeface does not apply. The caseback wording is still unread. |
+| 4 | Casio's "48 cities / 31 time zones" claim versus an early count of 46 codes + UTC. | Resolved for the city count in §5: the printed table and `src/shared/catalog.ts` both hold 49 codes (48 cities plus UTC). The "31 time zones" half is still unresolved. Model the table as data (`ZON-2`); do not assert 31. |
 | 5 | Whether a given AE-1200WH is engraved 3198 or 3299. | None functionally; procedures are identical. |
 | 6 | The "Resin / Chrome plated" bezel-material variant line. | Only "Resin" is corroborated. |
 
@@ -443,3 +444,7 @@ T-1…T-4, `MUTE`/`ALM`/`SIG` icons, and a dedicated city-code field — plus th
 5. **No dot-matrix text** — the 7-segment letter glyph set must be authored.
 6. **The city table is data, with timan's extended offsets as a deliberate improvement.**
 7. **The 10-year battery is conditional on usage**, which is what makes the simulated battery honest.
+   That cell belongs to the watch controller. The world-time board, which is the window the shortcut
+   opens, shows the operating-system battery when the browser provides `navigator.getBattery`.
+8. **The desktop window is the world-time board** (`src/renderer/board.ts`). The face this document
+   describes is the preview page. [NEXT-SESSION.md](NEXT-SESSION.md) is the current map of the two.

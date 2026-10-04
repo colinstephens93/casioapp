@@ -1,13 +1,13 @@
 # Handoff
 
 Everything a fresh session needs to work on this project productively without rediscovering what has
-already been learned the hard way. Read this first, then
-[ENVIRONMENT.md](ENVIRONMENT.md) before running anything.
+already been learned the hard way. [NEXT-SESSION.md](NEXT-SESSION.md) says where the work stands.
+Read [ENVIRONMENT.md](ENVIRONMENT.md) before running anything.
 
-**One-line summary:** a Casio AE-1200WH desktop clock widget for Windows, built in Electron. The
-verifiable core — time engine, city table, world map, seven-segment face, live state, all five screens
-and every pusher gesture — is complete and tested. The widget itself cannot be launched in the
-development sandbox, but its drawing can be rendered and inspected. See [PROGRESS.md](PROGRESS.md) for
+**One-line summary:** a desktop world-time board, opened by `World time.vbs` in Edge, plus the
+AE-1200WH face on the preview page. The time engine, city table, map, face, five screens, pushers,
+and the board are tested. Electron is written and still does not open a window on this PC. See
+[NEXT-SESSION.md](NEXT-SESSION.md) for the current launch path and [PROGRESS.md](PROGRESS.md) for
 how it got here.
 
 ## 1. Get running in three commands
@@ -21,53 +21,64 @@ npm run build            # compiles, bundles the preview, generates it, verifies
 Then:
 
 ```sh
-npm test                 # 429 tests, no build step needed
+npm test                 # 439 tests. Wiring tests need a prior build; npm run check does both
 npm run typecheck        # four tsconfigs — run this, see §5
 ```
 
-**To see the result without any of that:**
+**To see the board:** `npm run build`, then double-click `World time.vbs`. It opens
+`dist/renderer/widget.html` in Edge. That file is a classic script bundle. Opening
+`dist/renderer/index.html` from the file explorer fails in Edge, because that page is an ES module.
+
+**To see the watch face:**
 
 ```
 dist/preview/index.html
 ```
 
-Open it in a browser. Nineteen rendered faces plus live controls. No server needed. The controls are at
-the **top** of the page and the *Live* card is the first card in the gallery, so there is no scrolling
-involved. The *Live* card is driven by the real `WatchController`, its pushers can be clicked and held,
-and right-clicking the case opens the context menu (INT-7).
+Open it in a browser. Nineteen cards: the *Live* face first, then eighteen fixed screens, with the
+controls at the **top** of the page. The *Live* card is driven by the real `WatchController`, its
+pushers can be clicked and held, and right-clicking the case opens the context menu (INT-7). The
+card's own note says the desktop shortcut opens the board.
 
 ## 2. What this project is
 
-A desktop clock widget modelled on the **Casio AE-1200WH** ("Royale", module 3198): the green LCD, the
-seven-segment digits, the dot-matrix world map with a lit time-zone band, the analog subdial, the four
-labelled pushers, and all five screens its three modes contain.
+Two surfaces:
+
+1. **The desktop window** is a world-time board in the arrangement and palette of timan: analog clock,
+   map, city, seven-segment digits, zone list. `src/renderer/board.ts` draws it. `World time.vbs`
+   opens it in Edge. State lives in `src/shared/desk.ts`.
+2. **The preview page** is the Casio AE-1200WH ("Royale", module 3198): steel case, pale LCD, dark
+   blue digits, dot-matrix map, analog subdial, four pushers, and all five screens. `src/renderer/face.ts`
+   draws it. `THEME` in `src/shared/theme.ts` is that face's palette.
 
 Fan project. Not affiliated with or endorsed by Casio. See [NOTICE.md](../NOTICE.md).
 
-### The documents, and when to read each
-
 | Document | Read it when |
 |---|---|
-| [REQUIREMENTS.md](REQUIREMENTS.md) | You need to know **what** to build. Every requirement has a stable ID (`WIN-*`, `DST-*`, …). |
-| [PLAN.md](PLAN.md) | You need the milestone sequence, architectural decisions, risks, definition of done. |
-| [RESEARCH.md](RESEARCH.md) | You need a **fact about the watch**, with citations, plus everything unverifiable. |
-| [ENVIRONMENT.md](ENVIRONMENT.md) | **Before running any command.** Five sandbox traps, all solved, each of which presents as a code bug. |
-| [PROGRESS.md](PROGRESS.md) | You want the history, the bug list, or what is verified and how. |
+| [NEXT-SESSION.md](NEXT-SESSION.md) | You need **where the work stands** and how to open the window. |
+| [REQUIREMENTS.md](REQUIREMENTS.md) | You need the original AE-1200 specification. Every requirement has a stable ID (`WIN-*`, `DST-*`, …). The status banner at the top says what the shortcut now opens. |
+| [PLAN.md](PLAN.md) | You need the milestone sequence for that specification. |
+| [RESEARCH.md](RESEARCH.md) | You need a **fact about the watch**, with citations. |
+| [ENVIRONMENT.md](ENVIRONMENT.md) | **Before running any command.** Sandbox traps, and the Electron crash that sent the shortcut to Edge. |
+| [PROGRESS.md](PROGRESS.md) | You want the history. |
 
 **Watch out:** the reference project's own README and GitHub description are stale. GitHub calls it
 "Command line interface to get Timezone"; it is actually a terminal world clock. Trust the README, not
 the repo blurb.
 
+
+
 ## 3. Architecture, and the rules that hold it together
 
 ```
-src/shared/     logic: no DOM, no Electron. The lowest layer.
-src/renderer/   the face: SVG generation and the preview page (ESM, DOM-free until it renders)
+src/shared/     logic: no DOM, no Electron. The lowest layer. Includes desk.ts, the board's state.
+src/renderer/   board.ts (the window) and face.ts (the preview SVG). ESM.
 src/main/       Electron main process (CommonJS, .cts)
 src/preload/    the narrow context-bridge surface (CommonJS, .cts)
 test/           unit tests, run directly by Node with no build step
 scripts/        build, bundle, preview, rasterise, verify — all Node or Python
-review/         watermarked iteration rasters handed to a human, outside the build's reach
+review/         watermarked iteration rasters of the face, outside the build's reach
+World time.vbs  opens dist/renderer/widget.html in Edge
 ```
 
 ### Rule 1 — one-way dependency
@@ -83,8 +94,10 @@ without a window.
 timers, no side effects. Everything conditional is a field on the state. This is what makes the face
 snapshot-testable and what let the whole thing be rasterised for inspection.
 
-Corollary: **timers live in the `Watch` controller**, never in the renderer. The `T-n` register
-indicator is a `showRegister` boolean, not a 1-second timer inside the drawing code.
+Corollary: **timers for the watch face live in the `Watch` controller**, never inside `renderFace`.
+The `T-n` register indicator is a `showRegister` boolean, not a 1-second timer inside the drawing
+code. `renderBoard` is pure in the same way. The board's one-second repaint lives in
+`src/renderer/index.ts`.
 
 ### Rule 3 — derive once per sync
 
@@ -104,7 +117,7 @@ layout test fails, the layout is wrong — change the constants, not the test.**
 |---|---|---|
 | `src/shared/time.ts` | Offsets, wall clock, ±1 day marker, DST, formatting | Ported from the reference project (MIT), re-typed |
 | `src/shared/catalog.ts` | The watch's 49 codes + extended zones | Modelled as **data**; the size is computed, never asserted as 48/31 |
-| `src/shared/glyphs.ts` | Seven-segment encoding: which segments spell what | The whole typography of the widget |
+| `src/shared/glyphs.ts` | Seven-segment encoding: which segments spell what | Typography of the watch face. The board has its own block digits in `board.ts` |
 | `src/shared/svg.ts` | Segment geometry, the sprite builder, text layout | Geometry authored once, instanced via `<use>` |
 | `src/shared/theme.ts` | Colour tokens and the face grid | One unit = 0.1 mm. The lower rows' y values are **solved**, not chosen — see §5 |
 | `src/shared/map.ts` | Land bitset, band placement, `bandForMode` | Encodes the Home City fallback rule |
@@ -113,15 +126,17 @@ layout test fails, the layout is wrong — change the constants, not the test.**
 | `src/shared/stopwatch.ts` | The three behaviours, the 24-hour rollover | No lap memory, by requirement |
 | `src/shared/machine.ts` | **Every screen and sub-screen.** A pure reducer | What every pusher does, everywhere |
 | `src/shared/gestures.ts` | Press, hold and chord at the watch's durations | Injectable clock; no timers |
-| `src/shared/controller.ts` | **Everything with a clock in it** | The only object with timers, cadence, persistence and the battery |
-| `src/shared/watch.ts` | The pure zone-and-clock derivation | `syncWatch` only: settings plus an instant to a snapshot. Not a second owner of the watch — see §5 |
-| `src/renderer/face.ts` | **The single layout authority.** Case, LCD, all fields | Pure; no DOM |
-| `src/renderer/index.ts` | The widget's entry: binds the controller to the bridge | The same `WatchController` the preview runs |
+| `src/shared/controller.ts` | **The watch face's clock** | Timers, cadence, persistence and the simulated battery for the five screens. The board's tick lives in `renderer/index.ts` |
+| `src/shared/watch.ts` | The pure zone-and-clock derivation for the face | `syncWatch` only: settings plus an instant to a snapshot. Not a second owner of the watch — see §5 |
+| `src/shared/desk.ts` | **The board's state.** T0, up to nine favourites, focus, 12/24, DST | A payload without `desk: 1` is an old face blob and falls back to the defaults |
+| `src/renderer/face.ts` | **The watch-face layout.** Case, LCD, all fields | Pure; no DOM. The preview page draws this |
+| `src/renderer/board.ts` | **The window's layout.** Analog, map, clock, zone list | Pure HTML from a `DeskState`. The shortcut shows this |
+| `src/renderer/index.ts` | The widget page: binds the desk to the bridge or to `localStorage` | Key `worldtime.desk` when `window.widget` is absent |
 | `src/renderer/preview.ts` | The standalone preview page and its inline script | The inline script is a template string — see §5 |
 | `src/main/config.ts` | The config schema, repair, clamping, atomic write | **ESM and Electron-free**, so it is unit-tested — see §5 |
 | `src/main/notify.ts` | The notification payload and the toast XML | **ESM and Electron-free**, likewise |
 | `src/main/main.cts` | The process: window, tray, IPC, lifecycle | CommonJS; imports Electron |
-| `src/main/window.cts` | The window, its letterbox contract, the fullscreen yield | CommonJS |
+| `src/main/window.cts` | The Electron window, its letterbox contract, the fullscreen yield | CommonJS. Loads `renderer/index.html` and titles the window "World time". Size clamp 760×540 through 1100×780 |
 | `src/main/tray.cts` | The tray icon and menu | CommonJS; the icon is drawn, not shipped |
 | `src/main/notifications.cts` | The Electron-facing half of notifications | CommonJS |
 | `src/preload/preload.cts` | The five-method context bridge | CommonJS; the renderer's entire outside world |
@@ -338,10 +353,32 @@ Four defects in this project were invisible to every test and obvious in the ima
 
 The rasteriser costs a minute and catches a class of bug the suite structurally cannot.
 
+### The subdial follows the Home City
 
+On the watch face, the analog subdial follows the Home City in every mode, whatever city is displayed
+(requirement ANA-2). Its ring is numbered **5…60**, not 1…12 (ANA-4), which is why it is hand-drawn.
+The board's analog clock is a separate drawing in `board.ts`, and it follows the focused row.
 
-In every mode, whatever city is displayed (requirement ANA-2). Its ring is numbered **5…60**, not
-1…12 (ANA-4), which is why it is hand-drawn.
+### The board and the face are different pages
+
+`renderFace` is the preview. `renderBoard` is the window. A change to `THEME` moves the face and leaves
+the board where it is. The board's palette is the literals in `board.ts` and `styles.css` (lit
+`#c9f2b0`, ground `#070a08`, land `#4f6b52`, land in the band `#b7ec9a`, dim text `#6f8571`).
+
+The map on the board is 64×16 cells sampled from the 96×40 bitset. The band is two columns, and only
+land in those columns is marked. Ocean cells in the band are empty.
+
+A favourite that is also the system zone is listed twice, as T0 and as its slot. `deskRows` skips a
+zone in the catalogue once it is already showing, and it still appends every stored favourite.
+
+The selected row's marker is ▸. A favourite that is not selected shows ★.
+
+`lcdBlock` joins glyphs with a space. Seconds use width 3 and the main digits use width 9. Unlit
+segments are `#101612`. A brighter ghost turns a 9 into an 8.
+
+The shortcut page is `dist/renderer/widget.html`, a classic script. Electron's window loads
+`dist/renderer/index.html`, the ES module page. `scripts/bundle-preview.mjs` must strip `.ts` as well
+as `.js` from require specifiers, or `widget.js` throws `module not found: renderer/board.ts`.
 
 ## 6. How to see what you are doing
 
@@ -373,13 +410,16 @@ obvious in the image — including one class (case print over a live field) that
 
 ## 7. What is next
 
-**See [NEXT-SESSION.md](NEXT-SESSION.md) for the current, short list.** The summary below is the shape of the remaining work.
+**See [NEXT-SESSION.md](NEXT-SESSION.md).** The window is the board, launched by `World time.vbs`.
+The notes below are what is still unfinished around that.
 
-### The shell is written and its *wiring* is tested; it still needs a desktop
+### The shell is written and its *wiring* is tested; Electron still has not opened a window here
 
 M1 and M8's window half are implemented: window, tray, config file, notifications, the renderer entry
-point, the letterbox layout, the drag rules and the packaging config. **None of it can be run here** —
-DSH is a non-interactive desktop and Chromium needs the named pipes the sandbox forbids.
+point, the letterbox layout, the drag rules and the packaging config. The window code loads
+`dist/renderer/index.html` and titles itself "World time". On this PC `electron.exe` 40.10.6 exits
+before that window appears, which is why the shortcut uses Edge. Inside the DSH sandbox a window
+cannot be shown either. Both limits are in [ENVIRONMENT.md](ENVIRONMENT.md).
 
 What *is* tested is the wiring. `test/wiring.test.ts` runs the built `.cjs` shell against a recording
 fake Electron, so the window options, tray menu, notification construction, IPC surface and process
@@ -397,52 +437,44 @@ where a problem is most likely, and item 6 is explicitly an approximation rather
 `docs/ENVIRONMENT.md` §10 explains the ESM/CommonJS split that decides which files can be tested at all,
 and §11 why the notification's category is toast XML rather than an Electron option.
 
-### Needs a human, not an agent
+### Still needs a human
 
-1. **Colours.** The research could not measure them from photography, so the first pass was estimated;
-   it has since been measured from the two reference photos in `notes/` and the repository root. The
-   measurement took **two attempts** — the first sampled the shadowed recesses of one photograph and
-   concluded the LCD was dark olive, which inverted the contrast. The LCD is pale (`#aab4b4`) with dark
-   **blue** segments (`#0c1a24`). They live as named tokens in `THEME` in `theme.ts`, so a further pass
-   is one edit each. Whether the result *looks* right is still a browser question — there is no way to
-   screenshot one from here.
-2. **Segment proportions and stroke weight.** Authored by eye, never compared to the real watch. The
-   rasteriser cannot show stroke weight faithfully, so this one genuinely needs a browser.
+These are about the **preview face**. The board is a separate drawing.
+
+1. **Whether the measured face looks like the photographs.** The LCD tokens are pale (`#aab4b4`) with
+   dark blue segments (`#0c1a24`), on steel (`#d8d8d8`). The first measurement sampled shadows and
+   inverted the contrast; RESEARCH.md §7 records both passes. A further pass is one edit per token in
+   `THEME`. There is no way to screenshot a browser from the sandbox.
+2. **Segment proportions and stroke weight.** Authored by eye. The rasteriser cannot show stroke weight
+   faithfully.
 3. **The case proportions**, still 450 × 445 rather than the device's 450 × 421. See RESEARCH.md §6.
-4. **The World Time name rule.** Thirty-eight of the forty-nine names do not fit the row and are shown
-   as codes. The alternative is a wider row, which costs the code field or the register indicator — a
-   design call, not an engineering one.
-5. **The `ILLUMINATOR` band and the map's resolution.** On the real watch `ILLUMINATOR` is printed on
-   the steel below the black panel; here it is inside the panel. And the map is still full-resolution
-   dot-matrix, which reads as noise at the size the face gives it.
-6. **The product name.** `royale` is a placeholder and appears in `electron-builder.yml`'s `appId`.
+4. **The World Time name rule on the face.** Thirty-eight of the forty-nine names do not fit the row and
+   are shown as codes. The board prints city names in full, in its own row.
+5. **The `ILLUMINATOR` band and the face's map resolution.** On the real watch `ILLUMINATOR` is printed
+   on the steel below the black panel; on the face it sits inside the panel. The face's map is still
+   full-resolution dot-matrix. The board's map is the 64×16 sample.
+6. **The product name.** `royale` is a placeholder and appears in `electron-builder.yml`'s `appId` and
+   in `APP_USER_MODEL_ID`.
+7. **The flat glyph route**, still built. NEXT-SESSION.md says what each route-probe answer means.
 
-Open `dist/preview/index.html` and compare it against the photo in `notes/`. That is the fastest route
-to correcting the first five, and the only route for the first two.
+Open `dist/preview/index.html` beside the photo in `notes/` for the first five. Open the shortcut for
+the board.
 
 ## 8. Repository state
 
-Nine commits on `main`; the most recent is `75e7c6f`, which fixed the face's missing stylesheet, the
-launcher, and recorded the colour gap.
+Eleven commits on `main`. HEAD before this documentation pass was `e5c99c7` ("Final MVP"). The commit
+before that is `6b71df2` ("Grok fix"). `75e7c6f` is the stylesheet, launcher, and colour-gap commit,
+and it is no longer the tip.
 
-**Working tree (uncommitted, colour-pass session):** the measured palette in `src/shared/theme.ts`, the
-`FACE.bezelPanel`/`FACE.screws` geometry and the case/bezel changes in `src/renderer/face.ts`, the lit
-map window in `src/shared/map.ts`, the preview restructure in `src/renderer/preview.ts`, the stylesheet
-parsing in `scripts/svg_to_png.py`, and documentation.
+The colour pass, the preview restructure, the world-time board, and `World time.vbs` are in that
+history. `npm test` on 2026-10-04 reported 439 passing tests, 94 suites, 15 files.
 
-Nine files modified, nothing untracked. `Casio-AE1200-1.webp` is gitignored by the existing `*.webp`
-rule, which is why it does not appear in `git status` — it is the second reference photograph and the
-one that settled the palette.
-
-**This work has never been seen in a browser and is not validated.** It is green in every way this
-sandbox can check — 429 tests, four typechecks, build self-verification — and none of that can see
-whether the face draws or whether it looks like the watch. `NEXT-SESSION.md` "RESUME HERE" is the test
-plan handed to the user, and it is the next action.
+`Casio-AE1200-1.webp` is gitignored by `*.webp`. `notes/` is gitignored. Both are reference
+photographs.
 
 **`dist/` is a build product and is recleaned by every `npm run check` and `npm run build`.** Anything
-written there by `svg_to_png.py` — every review raster — is deleted by the next build. The rasters from
-this session were lost that way, so they were regenerated into **`review/`**, which is not gitignored.
-Write review images there, or regenerate them after the last build.
+written there by `svg_to_png.py` is deleted by the next build. The colour-pass rasters were lost that
+way once, and now live in **`review/`**, which is not gitignored. Write review images there.
 
 The watcher fix is worth knowing about before trusting a development loop: `src/main` was **not**
 watched, so editing `config.ts` or `notify.ts` left `dist/main` stale while the build looked healthy.

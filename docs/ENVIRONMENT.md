@@ -1,8 +1,20 @@
-# Environment notes — running this project inside DSH
+# Environment notes
 
-This file records environment obstacles that cost real time to diagnose. Each one is a
-property of the DSH sandbox this project is being developed in, not a defect in the project.
-On an ordinary machine none of this applies.
+Two limits get mixed up. They are different.
+
+**The shortcut on this PC uses Edge.** `World time.vbs` opens `dist/renderer/widget.html` in an Edge
+app window (profile `%LOCALAPPDATA%\WorldTime`, size 920×640). The script's own comment records why:
+`electron.exe` 40.10.6 exits with an access violation before it can create a window, including
+`electron --version` unless `--no-sandbox` is set, and a window still does not appear.
+`ELECTRON_RUN_AS_NODE` must be unset or the binary runs as plain Node (§3). `npm start` is still the
+Electron launcher. The shortcut is the launch that shows the board. Missing Edge or a missing
+`widget.html` shows a message that says to run `npm run build`.
+
+**The rest of this file is the DSH sandbox** this project is developed in. Commands here run on a
+non-interactive desktop, and Chromium's named pipes are forbidden, so an agent here cannot screenshot
+a browser. That is a property of the sandbox, separate from the Electron crash above. On an ordinary
+machine the sandbox sections do not apply. The Electron crash was observed on the interactive PC as
+well, which is why the shortcut does not call `electron.exe`.
 
 ## 1. npm cannot write its default cache — `cache` redirect — SOLVED
 
@@ -80,9 +92,10 @@ Interpretation:
    explicitly forbids opening them — which matches the `0xC0000005` crash once the Chromium
    sandbox is disabled, and the earlier `0x80000003` when it is enabled.
 
-**Consequence: this environment cannot launch the widget.** It can still build it, typecheck
-it, unit-test every headless module, and generate the renderer as static HTML/SVG — but the
-window must be opened by a human on an ordinary desktop.
+**Consequence: this sandbox cannot launch the widget.** It can still build it, typecheck
+it, unit-test every headless module, and generate the renderer as static HTML. On the interactive
+PC the launch is `World time.vbs`, which opens the built page in Edge. `npm start` is Electron, and
+that binary exits before a window appears on this PC as well as in this sandbox.
 
 ### 4a. The same limit blocks headless screenshots, so keep a "render it and look" route — SETTLED
 
@@ -252,7 +265,7 @@ tested — it means the split has to be deliberate. `src/main` therefore holds t
 | `.ts` | ESM, compiled by the in-process transpiler | Node built-ins only | **Yes**, directly, with no build step |
 
 The config schema, its per-field repair, the atomic write, the window-clamping rules and the
-notification payload all live in `.ts` files, and `test/shell.test.ts` covers them — 32 tests.
+notification payload all live in `.ts` files, and `test/shell.test.ts` covers them — 37 tests.
 
 **The boundary is load-bearing and easy to break.** A CommonJS file reaching an ESM one needs a dynamic
 `import()` and a `resolution-mode` attribute on the type-only imports; see HANDOFF.md §5 for the details

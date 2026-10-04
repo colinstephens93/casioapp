@@ -159,7 +159,7 @@ export function scenarios(now: Date): Scenario[] {
 			// to be last, so the page opened with nineteen frozen faces and the interactive watch was
 			// 600 KB further down.
 			title: 'Live',
-			note: 'The system clock and zone, updating every second. This is what the widget itself will show, and the card the controls above drive.',
+			note: 'The system clock and zone, updating every second. The controls above drive this AE-1200 face. The desktop shortcut opens the world-time board.',
 			zone: local,
 			homeZone: local,
 			at: now,

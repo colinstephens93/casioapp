@@ -13,26 +13,23 @@ Reused, with the reference project's own wording preserved where the behaviour i
 |---|---|---|
 | `src/time.ts` | `src/shared/time.ts` | Offset maths via `Intl`, wall-clock derivation, civil-day difference, DST override and labelling, ICU legacy-zone rename table, formatting helpers. Re-typed; the algorithm and the rename table are the reference project's work. |
 | `src/catalog.ts` | `src/shared/catalog.ts` | The curated one-city-per-offset idea and its extended fractional offsets. **Extended here** to the watch's full 49-code table. |
-| `src/world.ts` | not yet ported | A generated 96×40 Natural Earth 110m land bitset, to be committed as data with its generator when the map is built (M4). Its maths (`bandColumn`, `bandColumns`) is likewise reusable. |
+| `src/world.ts` | `src/shared/map.ts` | The 96×40 Natural Earth 110m land bitset, committed inline as `WORLD_BASE64`, with `bandColumn` for placement. The world-time board samples that bitset down to a 64×16 grid. |
 
-**No drawing code is reused.** The reference project renders to a terminal with ANSI escapes,
-braille characters and box-drawing glyphs; every pixel of this widget is rebuilt as SVG. The
-modules `worldmap`, `braille`, `lcd`, `digital`, `panel`, `theme`, `table`, `tui` and `main` were
-reviewed and deliberately not reused.
+The reference project's terminal renderer is not copied. `worldmap`, `braille`, `lcd`, `digital`, `panel`, `theme`, `table`, `tui`, and `main` were reviewed and left as terminal code. Two drawings were written here instead:
+
+- The desktop board (`src/renderer/board.ts`, `src/renderer/styles.css`) follows Timan's arrangement and palette: analog and map, city beside a digital clock, then the zone list. It is HTML and CSS, with its own seven-segment block digits.
+- The AE-1200WH face (`src/renderer/face.ts`) is hand-authored SVG. No pixel of it comes from the terminal renderer.
 
 ## Reference hardware
 
-The device this widget models is the **Casio AE-1200WH** (module 3198), and its documented
-behaviour is reproduced under the terms described in [REQUIREMENTS.md](REQUIREMENTS.md) §2.18:
-the watch's printed case text is reproduced because it is part of the design, but **no Casio logo
-or wordmark is used**, the project carries a neutral name, and it is not affiliated with or
-endorsed by Casio.
+The face this project models is the **Casio AE-1200WH** (module 3198). Its printed case text is reproduced because it is part of the design, under [REQUIREMENTS.md](docs/REQUIREMENTS.md) §2.18:
 
-"Casio", "AE-1200WH" and "ILLUMINATOR" are trademarks of Casio Computer Co., Ltd. Watch behaviour
-was established from Casio's own *Operation Guide 3198/3299* (manual code MA1205-EA) via the
-reproductions cited in [RESEARCH.md](RESEARCH.md).
+- The word **CASIO** is printed on the face, as SVG text on the black bezel panel, and on the world-time board, as the dim label at the top right (`p.mark`).
+- There is no Casio logo image.
+- The project name is `casioapp`. `royale` remains a placeholder in the installer id. The project is not affiliated with or endorsed by Casio.
+
+"Casio", "AE-1200WH", and "ILLUMINATOR" are trademarks of Casio Computer Co., Ltd. Watch behaviour was established from Casio's own *Operation Guide 3198/3299* (manual code MA1205-EA) via the reproductions cited in [RESEARCH.md](docs/RESEARCH.md).
 
 ## Map data
 
-The world map uses **Natural Earth** 110m land data (public domain), the same source the reference
-project generated its bitset from.
+The world map uses **Natural Earth** 110m land data (public domain), the same source the reference project generated its bitset from. The bitset lives in `src/shared/map.ts`.
