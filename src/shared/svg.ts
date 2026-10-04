@@ -135,6 +135,93 @@ export function glyphId(character: string): string {
 	}
 }
 
+/**
+ * A glyph drawn as **direct, absolutely-positioned paths** — no `<use>`, no `<symbol>`.
+ *
+ * ## Why this exists alongside `glyphUse`
+ *
+ * The whole face was originally drawn through one `<symbol>` per character, instanced by
+ * `<use href="#ch-0" …>`, and the sprite below still builds that. In a real browser the digits came out
+ * **completely blank** while every `<rect>`, `<circle>`, `<line>`, `<text>` and `<path>` drew correctly
+ * — that is, everything except the reference-based drawing. The rasteriser in `scripts/svg_to_png.py`
+ * drew them perfectly, because it re-implements the sprite lookup itself rather than following the SVG
+ * rules, so it validated a construct the browser was refusing. A verification tool that reimplements
+ * the thing it verifies cannot catch a fault in that thing.
+ *
+ * So this function emits the geometry **inline and absolute**: the segment paths are translated and
+ * scaled into place here, in this file, with no indirection for a renderer to get wrong. It is more
+ * markup — a character is seven paths instead of seven references — and that cost is accepted
+ * deliberately, because a clock that draws is worth more than a compact one that does not.
+ *
+ * ## The unlit segments
+ *
+ * The real LCD shows faint unlit segments, and the sprite draws them at low opacity. Doing that here
+ * would mean emitting all eight parts for every character, roughly a third more markup again. They are
+ * therefore **omitted**, which is the visual difference between this and the sprite: the lit figure is
+ * identical, and the ghost behind it is gone. That is recorded in `docs/RESEARCH.md` as a known
+ * deviation — it is a fidelity cost, not an oversight.
+ */
+export function glyphPaths(character: string, x: number, y: number, width: number): string {
+	const lit = new Set<string>(GLYPH_SEGMENTS[character] ?? []);
+	if (lit.size === 0) {
+		return '';
+	}
+	const height = (width / CELL_WIDTH) * CELL_HEIGHT;
+	const sx = width / CELL_WIDTH;
+	const sy = height / CELL_HEIGHT;
+
+	const paths: string[] = [];
+	for (const part of SEGMENT_ORDER) {
+		if (!lit.has(part)) {
+			continue;
+		}
+		const source = SEGMENT_PATHS[part];
+		const numbers = (source.match(/-?\d*\.?\d+(?:[eE]-?\d+)?/g) ?? []).map(Number);
+		// Every segment outline is a closed polygon written as `M x y L x y … Z` — the horizontal bars are
+		// hexagons and the vertical ones share that shape, so the coordinate count is a multiple of two
+		// and is **not** fixed. An earlier version of this asserted six numbers and threw immediately;
+		// the assertion was wrong, not the geometry. What actually matters is only that the path is the
+		// simple polygon form this rebuilds, so that is what is checked.
+		if (numbers.length < 6 || numbers.length % 2 !== 0 || /[aqstvhcs]/i.test(source)) {
+			throw new Error(
+				`segment ${part} is not a simple closed polygon (${numbers.length} numbers) — ` +
+					'glyphPaths rebuilds only the M/L/Z form and must be revisited',
+			);
+		}
+
+		const points: string[] = [];
+		for (let i = 0; i < numbers.length; i += 2) {
+			const px = numbers[i] as number;
+			const py = numbers[i + 1] as number;
+			points.push(`${round(x + px * sx)} ${round(y + py * sy)}`);
+		}
+		const [first, ...rest] = points;
+		paths.push(`<path class="lit" d="M ${first} L ${rest.join(' L ')} Z" />`);
+	}
+	return paths.join('');
+}
+
+/**
+ * A whole string as inline paths, positioned exactly as `textRun` positions its `<use>` references.
+ *
+ * The two functions must agree on advance and tracking or the flat and sprite builds would lay out
+ * differently; they share the constants above so that cannot drift.
+ */
+export function textRunPaths(
+	text: string,
+	x: number,
+	y: number,
+	cellWidth: number,
+	tracking = 0.18,
+): string {
+	const advance = cellWidth * (1 + tracking);
+	return [...text]
+		.map((character, index) =>
+			glyphPaths(character, x + index * advance, y, cellWidth),
+		)
+		.join('');
+}
+
 /** A reference to one character, positioned and sized by the caller through `x`, `y` and `width`. */
 export function glyphUse(character: string, x: number, y: number, width: number): string {
 	const height = (width / CELL_WIDTH) * CELL_HEIGHT;

@@ -10,7 +10,17 @@ It deliberately parses the **real generated SVG** rather than re-deriving the ge
 draws is genuine renderer output. It is an inspection aid, not a source of truth: the tests and the
 browser preview in the user's own browser remain authoritative.
 
-Usage: python scripts/svg_to_png.py <input.svg> <output.png> [scale]
+Usage: python scripts/svg_to_png.py <input.svg> <output.png> [scale] [--label TEXT]
+
+`--label` is a review watermark. It stamps the text across the top and bottom in a **real system font**
+drawn by PIL, *after* the SVG has been rasterised — so unlike anything inside the SVG, the label cannot
+be affected by a rendering fault in the SVG itself. That matters: the digits on the face once came out
+blank in a real browser while this rasteriser drew them perfectly, so a reviewer needs a marker that is
+independent of the thing under review. The text is sized from the image, so it stays legible at any
+scale.
+
+The wrapping is deliberate. A long label is broken onto multiple lines inside the top band rather than
+being clipped, because a truncated label is exactly as useless as no label.
 """
 import re
 import sys
@@ -73,8 +83,28 @@ def classes_of(element):
     return (element.get("class") or "").split()
 
 
+def resolve_paint(element):
+    """An element's paint, from an inline `fill` attribute first and then from its classes.
+
+    The inline attribute takes precedence because that is the SVG cascade: a presentation attribute is
+    overridden by a stylesheet rule, but this tool has no CSS cascade at all, so the attribute is all it
+    can honour. Honouring it matters more than it sounds — a probe written with `fill="#1b2410"` was
+    silently rasterised in the token colour instead, which made a correct glyph look wrong. A tool that
+    quietly substitutes its own colours cannot be trusted to review colour, and it was already only
+    barely trustworthy about geometry.
+    """
+    inline = element.get("fill")
+    if inline and inline.startswith("#") and len(inline) == 7:
+        return (inline, 1.0)
+    return None
+
+
 def style_for(element):
-    """Resolves an element's fill and opacity from its classes."""
+    """Resolves an element's fill and opacity from an inline attribute, then its classes."""
+    inline = resolve_paint(element)
+    if inline is not None:
+        return inline
+
     names = classes_of(element)
     # `in-band` is a modifier, not a colour of its own: it overrides the base land colour.
     if "in-band" in names:
@@ -105,13 +135,98 @@ def parse_path(d):
     return [pairs] if len(pairs) >= 3 else []
 
 
+def load_font(size):
+    """A real TrueType face, falling back to PIL's bitmap font only if Windows has none.
+
+    `consola.ttf` first because it is monospaced, which makes a label's digits line up with the
+    watch's own — then `arial.ttf`, then the default. PIL's default font is a 1980s bitmap face that
+    cannot scale, so it is a last resort rather than a preference.
+    """
+    for name in ("consola.ttf", "arial.ttf", "segoeui.ttf"):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def wrap_to_width(draw, text, font, max_width):
+    """Greedy word wrap, so a long label is never clipped."""
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if draw.textlength(candidate, font=font) <= max_width or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def stamp_label(image, label):
+    """Draws the review watermark: one band across the top, in a real font.
+
+    Sized from **both** dimensions. Sizing from width alone is what the first version did, and on a wide,
+    short image — a probe sheet of one glyph row — it produced a font big enough that the band consumed
+    the entire picture. A watermark that hides the thing it is labelling is worse than none.
+
+    Only the **top** band is drawn. The first version also drew a bottom band, which meant every labelled
+    image had a strip of the case print hidden under a solid rectangle, including the `10 YEAR BATTERY`
+    line the label was often describing. The top-left corner of these images carries nothing but case
+    material, so it is the one place a band costs no information.
+    """
+    width, height = image.size
+    draw = ImageDraw.Draw(image, "RGBA")
+    padding = max(4, int(min(width, height) * 0.02))
+
+    # Shrink until the wrapped label fits in a band no taller than a third of the image.
+    size = max(10, int(width / 40))
+    lines = []
+    while size >= 10:
+        font = load_font(size)
+        lines = wrap_to_width(draw, label, font, int(width - padding * 2))
+        line_height = size + max(2, int(size * 0.2))
+        if len(lines) * line_height + padding * 2 <= height * 0.34:
+            break
+        size = int(size * 0.85)
+
+    font = load_font(size)
+    line_height = size + max(2, int(size * 0.2))
+    band_height = len(lines) * line_height + padding * 2
+
+    draw.rectangle([0, 0, width, band_height], fill=(12, 14, 11, 240))
+    draw.line([0, band_height - 1, width, band_height - 1], fill=(201, 161, 90, 255), width=max(1, size // 8))
+
+    y = padding
+    for line in lines:
+        text_width = draw.textlength(line, font=font)
+        draw.text(((width - text_width) / 2, y), line, font=font, fill=(216, 216, 216, 255))
+        y += line_height
+
+    return image
+
+
 def main():
-    if len(sys.argv) < 3:
+    args = [a for a in sys.argv[1:]]
+    label = None
+    if "--label" in args:
+        index = args.index("--label")
+        if index + 1 >= len(args):
+            print("--label needs a value", file=sys.stderr)
+            return 1
+        label = args[index + 1]
+        del args[index : index + 2]
+
+    if len(args) < 2:
         print(__doc__)
         return 1
 
-    src, dst = sys.argv[1], sys.argv[2]
-    scale = float(sys.argv[3]) if len(sys.argv) > 3 else 2.0
+    src, dst = args[0], args[1]
+    scale = float(args[2]) if len(args) > 2 else 2.0
 
     tree = ET.parse(src)
     root = tree.getroot()
@@ -147,7 +262,8 @@ def main():
     def fill_of(name, opacity):
         if name is None:
             return None
-        rgb = hex_to_rgb(TOKENS[name])
+        # A literal hex colour comes from an inline `fill` attribute; anything else is a TOKENS key.
+        rgb = hex_to_rgb(name) if name.startswith("#") else hex_to_rgb(TOKENS[name])
         return rgb + (int(255 * opacity),)
 
     # Walk the tree in document order, which is also z-order.
@@ -230,8 +346,15 @@ def main():
                 x -= text_w
             draw.text((x, y - size * 0.8), content, font=text_font, fill=text_colour)
 
+    # The watermark is applied *after* the SVG is drawn and before the single save, so there is no
+    # window in which an unlabelled image could be mistaken for a labelled one.
+    if label:
+        stamp_label(image, label)
+
     image.save(dst)
-    print(f"wrote {dst} ({width}x{height})")
+    # ASCII only in the terminal line: this runs under a Windows console whose code page mangles an
+    # em dash into a replacement character, and a garbled confirmation is a bad first impression.
+    print(f"wrote {dst} ({width}x{height}){f' - label: {label}' if label else ''}")
     return 0
 
 

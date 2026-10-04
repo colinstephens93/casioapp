@@ -28,14 +28,36 @@ if (!existsSync(binary)) {
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 
-const entry = join(root, 'dist', 'main', 'main.js');
+/**
+ * The entry point, with its extension read from the build rather than hard-coded.
+ *
+ * `.cjs`, not `.js` — Electron's main process is CommonJS, so `tsconfig.main.json` emits `main.cjs`.
+ * This was hard-coded to `.js`, which means the launcher's own existsSync check failed on every run and
+ * printed "run `npm run build` first" *after* the build had just succeeded. A launcher that misdirects
+ * on its first use is the worst possible first impression, so the extension is discovered and the error
+ * names what it actually looked for.
+ */
+function findEntry() {
+	for (const name of ['main.cjs', 'main.js']) {
+		const candidate = join(root, 'dist', 'main', name);
+		if (existsSync(candidate)) {
+			return candidate;
+		}
+	}
+	return null;
+}
 
-if (!existsSync(entry)) {
-	console.error(`missing ${entry} — run \`npm run build\` first`);
+const entry = findEntry();
+
+if (!entry) {
+	console.error('missing dist/main/main.cjs — run `npm run build` first');
 	process.exit(1);
 }
 
-console.log(`starting electron ${readFileSync(join(root, 'node_modules', 'electron', 'package.json'), 'utf-8').match(/"version":\s*"([^"]+)"/)?.[1] ?? ''}`);
+console.log(
+	`starting electron ${readFileSync(join(root, 'node_modules', 'electron', 'package.json'), 'utf-8').match(/"version":\s*"([^"]+)"/)?.[1] ?? ''}`,
+);
+console.log(`entry: ${entry.replace(root + '\\', '').replace(root + '/', '')}`);
 
 const result = spawnSync(binary, [entry], { stdio: 'inherit', cwd: root, env });
 

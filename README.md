@@ -40,7 +40,7 @@ that works both inside the sandbox and on an ordinary machine. Full explanation 
 Then:
 
 ```sh
-npm test         # 420 unit tests: time, zones, DST, map, glyphs, face, screens, gestures, battery, shell
+npm test         # 429 unit tests: time, zones, DST, map, glyphs, face, screens, gestures, battery, shell
 npm run check    # typecheck + build + tests, in the order a clean checkout needs
 npm run build    # compiles main/preload to CommonJS and shared/renderer to ESM, then verifies both pages
 npm run typecheck  # four tsconfigs — the tests cannot see types, so this is not optional
@@ -95,25 +95,33 @@ TypeScript itself.
 
 ## Progress
 
-**420 tests passing, typecheck clean on all four configs.** The verifiable core is complete — see
-[docs/PROGRESS.md](docs/PROGRESS.md) for the history and [docs/HANDOFF.md](docs/HANDOFF.md) for where
-to pick up.
+**429 tests passing, typecheck clean on all four configs.**
+
+> **Picking this up? Read [docs/NEXT-SESSION.md](docs/NEXT-SESSION.md) first.** It is short and current.
+> [docs/HANDOFF.md](docs/HANDOFF.md) is how to work on it; [docs/PROGRESS.md](docs/PROGRESS.md) is the history.
 
 | Area | State |
 |---|---|
-| Toolchain, build, tests | Working; the build verifies both the preview page and the widget page, and `npm run check` runs everything |
+| Toolchain, build, tests | Working; the build verifies both pages, and `npm run check` runs everything |
 | Time engine: offsets, wall clock, ±1 day marker, DST, formatting | Built, 35 tests |
 | City catalogue: the watch's 49 codes plus extended offsets | Built, verified against the manual's list |
 | Seven-segment glyph encoding | Built, 18 tests, collisions declared and audited |
-| Case, LCD, world map, analog subdial | Built, **visually verified** |
 | Mode state machine: five screens, every pusher | Built, 69 transition tests |
 | World Time, Alarm, Timer, Stopwatch | Working |
 | Pusher gestures: press, hold at 1/2/3 s, chords, repeats | Working, 25 tests |
 | Auto Display, auto-return, MUTE, flashing setting fields | Working |
 | Battery model, illumination, context menu | Working, calibrated to Casio's rating |
-| Config file: schema, repair, atomic write | Built, 32 tests, plus 4 build-configuration checks — `src/main/config.ts` |
-| Browser preview with live controls | Working — open `dist/preview/index.html` |
-| Electron shell: window, tray, notifications, packaging | **Written, and its wiring tested against a fake Electron — but never run.** See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) §9 |
+| Config file: schema, repair, atomic write | Built, 37 tests |
+| Face layout and geometry | Built, 52 tests, including that the face carries its own stylesheet |
+| Browser preview with live controls | Working — but the controls sit at the very **bottom** of a long page |
+| **Colour fidelity** | **Wrong at the case level.** The widget is black; the real AE-1200WH is brushed silver |
+| Electron shell: window, tray, notifications, packaging | Written, wiring tested against a fake Electron — **never executed** |
+| Desktop testing | **Not yet done.** The launcher was broken until the last session |
+
+### Status in one line
+
+The watch's **logic** is complete and thoroughly tested; its **appearance** does not yet match the real
+device, and the Electron shell has never been run.
 
 ### Running the widget
 
@@ -122,15 +130,13 @@ npm start        # builds, then launches
 npm run package  # builds, then electron-builder --win (needs electron-builder installed)
 ```
 
-The widget **cannot be launched in the development sandbox** this was built in: DSH runs commands on a
-non-interactive desktop, and Chromium needs the named pipes the sandbox forbids. So the shell is
-written and reviewed but never executed — `docs/ENVIRONMENT.md` §9 lists the sixteen claims a human
-should check on a real machine, ordered by how likely each is to be wrong.
+The widget has never been launched. Read [docs/NEXT-SESSION.md](docs/NEXT-SESSION.md) and
+[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) §9 before trying.
 
-What *is* checked here is that the shell passes the right things to Electron: `test/wiring.test.ts` runs
-the built code against a recording stand-in, which catches a mistyped option name — invisible to `tsc`,
-since every Electron option is optional. §12 of that document is explicit about the difference between
-"the shell intends this" and "Windows does this".
+The shell's wiring *is* checked: `test/wiring.test.ts` runs the built code against a recording
+stand-in, which catches a mistyped option name — invisible to `tsc`, since every Electron option is
+optional. §12 of that document is explicit about the difference between "the shell intends this" and
+"Windows does this".
 
 ### Seeing it without running it
 

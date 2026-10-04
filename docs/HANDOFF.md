@@ -275,6 +275,33 @@ The related ordering matters too: `load` checks `isFromTheFuture` **before** the
 because a file from the future differs from what this build would write by definition and would
 otherwise be reported as damaged.
 
+### The rasteriser is not eyes
+
+`scripts/svg_to_png.py` **does not implement SVG**. It re-implements the sprite lookup and hard-codes the
+class-to-colour table a second time, so it renders its own interpretation rather than following the rules
+a browser follows. It drew a *perfect* face while a real browser drew a green rectangle with no digits —
+for the entire project. It is useful for geometry, layout and colour *tokens*, and useless as evidence
+that a browser will render something.
+
+Three separate times in one session a tool agreed with itself instead of with reality: this rasteriser,
+the fake Electron, and a verifier that crashed inside its own regex. **When the question is "does this
+look right", the answer comes from a real browser and a human.** Use `--label` to watermark any image
+handed to a reviewer, so the image identifies itself.
+
+### One class, one rule — and the face must carry its own stylesheet
+
+The face was unstyled in the widget for the whole project because its stylesheet lived in the preview
+page while `renderFace()` embedded only the CSS variables. `test/face.test.ts` now asserts that every
+class the face emits has a rule in the stylesheet it carries. **Do not move `FACE_CSS` back out of
+`src/shared/theme.ts`**, and do not add a class to the face without a rule for it.
+
+### A failing assertion may be looking in the wrong place
+
+Twice in one session a *correct* test failed because its scope was wrong: after the stylesheet moved into
+the SVG, tests searching for `pushed` and `alerting` matched the CSS selectors instead of the markup. Use
+`faceMarkup()` in `test/face.test.ts` for anything asking "is this drawn?". Before changing code to make a
+test pass, check that the test is searching where the thing actually is.
+
 ### A truncated name is a wrong name
 
 The World Time row is 210 units and shows a city name whole or the city's three-letter code, never a
@@ -327,6 +354,8 @@ leave the LCD. Useful when a test failure names coordinates rather than a screen
 obvious in the image — including one class (case print over a live field) that no test can see.
 
 ## 7. What is next
+
+**See [NEXT-SESSION.md](NEXT-SESSION.md) for the current, short list.** The summary below is the shape of the remaining work.
 
 ### The shell is written and its *wiring* is tested; it still needs a desktop
 

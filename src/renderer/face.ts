@@ -32,7 +32,7 @@ import {
 	type DstMode,
 } from '../shared/time.ts';
 import { renderMap, type ScreenMode } from '../shared/map.ts';
-import { buildSprite, textRun, textWidth } from '../shared/svg.ts';
+import { buildSprite, textRun, textRunPaths, textWidth } from '../shared/svg.ts';
 import { FACE, TEXT_SIZE, TRACKING, themeCss } from '../shared/theme.ts';
 import { stopwatchParts, STOPWATCH_LIMIT_MS } from '../shared/stopwatch.ts';
 import { timerParts } from '../shared/timer.ts';
@@ -130,17 +130,66 @@ export interface DisplayState {
 	readonly illuminationMs: number;
 }
 
+/**
+ * Which drawing route the glyphs use.
+ *
+ * `sprite` is the original: one `<symbol>` per character, instanced by `<use>`. Compact, and it draws
+ * the faint unlit segments behind each figure.
+ *
+ * `flat` is `textRunPaths`: every lit segment emitted as an absolutely-positioned `<path>`, with no
+ * reference of any kind. Larger markup, and no unlit ghosts, but it asks nothing of the renderer.
+ *
+ * This exists because the digits came out **blank in a real browser** while every direct shape drew,
+ * and the development rasteriser could not see the fault (see `scripts/make-flat-probe.mjs`). The route
+ * is a parameter rather than a constant so the two can be put side by side and a human can say which
+ * one works, instead of the choice being made on reasoning that has already been wrong once.
+ */
+export type GlyphRoute = 'sprite' | 'flat';
+
+/**
+ * The active glyph route, and why it is module scope rather than a threaded parameter.
+ *
+ * About thirty call sites spell text onto the face, and passing a route to each of them would put a
+ * diagnostic concern into every signature in the file. A module-scoped selection keeps `renderFace` the
+ * only function that knows a route exists.
+ *
+ * The cost is honest and bounded: this is **single-threaded and synchronous**, so the route cannot
+ * change while a face is being built. `renderFace` sets it and calls straight through with no `await`
+ * anywhere on the path, which is what makes the shared state safe. If face rendering ever becomes
+ * asynchronous, this must become a parameter — and `test/face.test.ts` asserts both routes produce
+ * geometry for the same input, so a leak between them would fail there rather than in the preview.
+ */
+let activeRoute: GlyphRoute = 'sprite';
+
+/** Spells text with whichever route is active. The single seam between the two renderings. */
+function spell(text: string, x: number, y: number, cellWidth: number, tracking = 0.18): string {
+	// `textRun` here, not `spell` — a blanket rename of every call site rewrote this one too and made the
+	// sprite route call itself until the stack ran out. The seam must call the two implementations.
+	return activeRoute === 'flat'
+		? textRunPaths(text, x, y, cellWidth, tracking)
+		: textRun(text, x, y, cellWidth, tracking);
+}
+
 /** Draws the whole watch. */
-export function renderFace(state: DisplayState): string {
-	return [
-		`<svg class="watch" viewBox="0 0 ${FACE.width} ${FACE.height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${ariaLabel(state)}">`,
-		`<style>${themeCss()}</style>`,
-		buildSprite(),
-		renderCase(state),
-		renderLcd(state),
-		state.illuminated ? renderIllumination() : '',
-		'</svg>',
-	].join('');
+export function renderFace(state: DisplayState, route: GlyphRoute = 'sprite'): string {
+	activeRoute = route;
+	try {
+		return [
+			`<svg class="watch" viewBox="0 0 ${FACE.width} ${FACE.height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${ariaLabel(state)}">`,
+			`<style>${themeCss()}</style>`,
+			// The sprite is only needed by the reference route. Omitting it from a flat face also proves the
+			// flat face really is independent of it, rather than quietly still resolving against it.
+			route === 'sprite' ? buildSprite() : '',
+			renderCase(state),
+			renderLcd(state),
+			state.illuminated ? renderIllumination() : '',
+			'</svg>',
+		].join('');
+	} finally {
+		// Restored even if a renderer throws, so a failed flat render cannot leave the next sprite render
+		// silently drawing flat glyphs.
+		activeRoute = 'sprite';
+	}
 }
 
 /** A one-line description of what the face is showing, for screen readers (NFR-9). */
@@ -307,10 +356,10 @@ function renderIndicators(state: DisplayState): string {
 	// geometry does not move.
 	const alerting = state.alerting ? ' alerting' : '';
 	if (state.alarmArmed || state.alerting) {
-		parts.push(`<g class="alm-indicator${alerting}">${textRun('ALM', FACE.indicators.almX, FACE.indicators.y, cell, tracking)}</g>`);
+		parts.push(`<g class="alm-indicator${alerting}">${spell('ALM', FACE.indicators.almX, FACE.indicators.y, cell, tracking)}</g>`);
 	}
 	if (state.signalOn) {
-		parts.push(textRun('SIG', FACE.indicators.sigX, FACE.indicators.y, cell, tracking));
+		parts.push(spell('SIG', FACE.indicators.sigX, FACE.indicators.y, cell, tracking));
 	}
 
 	// DST has its own row, because sharing the city-code row means a fixed offset that either
@@ -324,7 +373,7 @@ function renderIndicators(state: DisplayState): string {
 			flashGroup(
 				state,
 				['dst'],
-				textRun(state.dstLabel, FACE.dstIndicator.x, FACE.dstIndicator.y, cell, tracking),
+				spell(state.dstLabel, FACE.dstIndicator.x, FACE.dstIndicator.y, cell, tracking),
 			),
 		);
 	}
@@ -337,7 +386,7 @@ function renderIndicators(state: DisplayState): string {
 	// contradicts the digits: the same instant said twice, and said differently.
 	const { wall, clock } = state;
 	if (clock === '12h' && wall.getUTCHours() >= 12 && state.mode !== 'alarm') {
-		parts.push(textRun('PM', pmIndicator.x, pmIndicator.y, cell, tracking));
+		parts.push(spell('PM', pmIndicator.x, pmIndicator.y, cell, tracking));
 	}
 
 	// The Multi Time register indicator is transient: the watch shows `T-1`…`T-4` in place of the
@@ -353,7 +402,7 @@ function renderIndicators(state: DisplayState): string {
 	if (state.showRegister) {
 		const label = `T-${state.multiTime}`;
 		parts.push(
-			textRun(
+			spell(
 				label,
 				registerIndicatorX(label),
 				codeField.y,
@@ -420,7 +469,7 @@ function mainX(state: DisplayState): number {
 
 /** The seconds run, in its own column on the sub-row. */
 function secondsRun(state: DisplayState): string {
-	return textRun(
+	return spell(
 		pad(state.wall.getUTCSeconds()),
 		FACE.row.secondsX,
 		FACE.row.subY,
@@ -452,7 +501,7 @@ function fieldsTimekeeping(state: DisplayState): string[] {
 			flashGroup(
 				state,
 				['year', 'month', 'day', 'illumination'],
-				textRun(value, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field),
+				spell(value, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field),
 			),
 		);
 	} else {
@@ -460,7 +509,7 @@ function fieldsTimekeeping(state: DisplayState): string[] {
 			flashGroup(
 				state,
 				['day'],
-				textRun(`${weekday} ${formatMonthDay(state.wall)}`, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field),
+				spell(`${weekday} ${formatMonthDay(state.wall)}`, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field),
 			),
 		);
 	}
@@ -468,21 +517,21 @@ function fieldsTimekeeping(state: DisplayState): string[] {
 	// The centre-right field carries the city code, and the register indicator takes its place for
 	// a second after the register changes (MOD-3).
 	if (!state.showRegister) {
-		parts.push(flashGroup(state, ['city'], textRun(state.cityCode, codeField.x, codeField.y, TEXT_SIZE.field, TRACKING.field)));
+		parts.push(flashGroup(state, ['city'], spell(state.cityCode, codeField.x, codeField.y, TEXT_SIZE.field, TRACKING.field)));
 	}
 
 	parts.push(
 		flashGroup(
 			state,
 			['hour', 'minutes'],
-			textRun(clockDigits(state), mainX(state), FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime),
+			spell(clockDigits(state), mainX(state), FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime),
 		),
 	);
 	parts.push(flashGroup(state, ['seconds'], secondsRun(state)));
 
 	// The ±1 day marker, when the civil date differs from the Home City's.
 	if (state.dayDiff !== 0) {
-		parts.push(textRun(state.dayDiff > 0 ? '+1' : '-1', dayMarker.x, dayMarker.y, TEXT_SIZE.field, TRACKING.field));
+		parts.push(spell(state.dayDiff > 0 ? '+1' : '-1', dayMarker.x, dayMarker.y, TEXT_SIZE.field, TRACKING.field));
 	}
 
 	return parts;
@@ -539,7 +588,7 @@ function fieldsWorldTime(state: DisplayState): string[] {
 					// practice; it exists so the function cannot produce a one-glyph string if a future
 					// layout shrinks the row that far.
 					fitText(state.cityCode, dateField.x, registerReserve(state), TEXT_SIZE.field, TRACKING.field);
-	parts.push(textRun(label, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
+	parts.push(spell(label, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
 
 	// The code, unless the register indicator is showing **in its place** (MOD-3).
 	//
@@ -550,14 +599,14 @@ function fieldsWorldTime(state: DisplayState): string[] {
 	// suppressed name would leave the screen saying only `TYO`, which is where the time is from but
 	// not what the operator scrolled to.
 	if (!state.showRegister) {
-		parts.push(textRun(state.cityCode, codeField.x, codeField.y, TEXT_SIZE.field, TRACKING.field));
+		parts.push(spell(state.cityCode, codeField.x, codeField.y, TEXT_SIZE.field, TRACKING.field));
 	}
 
-	parts.push(textRun(clockDigits(state), mainX(state), FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime));
+	parts.push(spell(clockDigits(state), mainX(state), FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime));
 	parts.push(secondsRun(state));
 
 	if (state.dayDiff !== 0) {
-		parts.push(textRun(state.dayDiff > 0 ? '+1' : '-1', dayMarker.x, dayMarker.y, TEXT_SIZE.field, TRACKING.field));
+		parts.push(spell(state.dayDiff > 0 ? '+1' : '-1', dayMarker.x, dayMarker.y, TEXT_SIZE.field, TRACKING.field));
 	}
 
 	return parts;
@@ -575,17 +624,17 @@ function fieldsAlarm(state: DisplayState): string[] {
 	const parts: string[] = [];
 
 	if (state.signalScreen) {
-		parts.push(textRun('SIGNAL', dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
+		parts.push(spell('SIGNAL', dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
 	} else {
 		const schedule = state.alarmMode === 'daily' ? 'DAILY' : state.alarmMode === 'once' ? 'ONCE' : 'OFF';
 		parts.push(
-			flashGroup(state, ['schedule'], textRun(schedule, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field)),
+			flashGroup(state, ['schedule'], spell(schedule, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field)),
 		);
 	}
 
 	if (!state.showRegister) {
 		const field = state.signalScreen ? 'SIG' : `AL${state.alarmNumber ?? 1}`;
-		parts.push(textRun(field, codeField.x, codeField.y, TEXT_SIZE.field, TRACKING.field));
+		parts.push(spell(field, codeField.x, codeField.y, TEXT_SIZE.field, TRACKING.field));
 	}
 
 	// An alarm's time is always 24-hour on the watch's alarm screen, whatever the clock format:
@@ -598,7 +647,7 @@ function fieldsAlarm(state: DisplayState): string[] {
 		flashGroup(
 			state,
 			['hour', 'minutes'],
-			textRun(alarmText, mainX(state), FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime),
+			spell(alarmText, mainX(state), FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime),
 		),
 	);
 
@@ -612,7 +661,7 @@ function fieldsAlarm(state: DisplayState): string[] {
 	// the panel says so. Drawn at the indicator cell because it is a marker rather than a value.
 	if (!state.signalScreen && state.alarmMode === 'once') {
 		parts.push(
-			textRun(
+			spell(
 				'1TIME',
 				FACE.onceMarker.x,
 				FACE.onceMarker.y,
@@ -642,9 +691,9 @@ function fieldsTimer(state: DisplayState): string[] {
 	// what they are setting. Otherwise the row shows the state: RUN, STP, or SET while editing.
 	const editing = state.timerSet;
 	const label = editing ? 'SET' : state.timerRunning ? 'RUN' : 'STP';
-	parts.push(textRun(label, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
+	parts.push(spell(label, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
 
-	parts.push(textRun('TIMER', codeField.x - 12, codeField.y, TEXT_SIZE.field, TRACKING.field));
+	parts.push(spell('TIMER', codeField.x - 12, codeField.y, TEXT_SIZE.field, TRACKING.field));
 
 	const ms = state.timerMs ?? 0;
 	const parts4 = timerParts(ms);
@@ -658,7 +707,7 @@ function fieldsTimer(state: DisplayState): string[] {
 		flashGroup(
 			state,
 			['timer-hours', 'timer-minutes'],
-			textRun(mainText, FACE.wideLeft, FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime),
+			spell(mainText, FACE.wideLeft, FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime),
 		),
 	);
 
@@ -666,7 +715,7 @@ function fieldsTimer(state: DisplayState): string[] {
 		flashGroup(
 			state,
 			['timer-seconds'],
-			textRun(subText, subFieldX(subText), FACE.row.subY, TEXT_SIZE.subSecond, TRACKING.subSecond),
+			spell(subText, subFieldX(subText), FACE.row.subY, TEXT_SIZE.subSecond, TRACKING.subSecond),
 		),
 	);
 
@@ -692,17 +741,17 @@ function fieldsStopwatch(state: DisplayState): string[] {
 	// The label goes on the date row rather than in the trailing block, so the digits below are never
 	// crowded: `SPL` while a split is frozen (DIS-7, SW-2), and the state otherwise.
 	const label = state.stopwatchSplit ? 'SPL' : state.stopwatchRunning ? 'RUN' : 'STP';
-	parts.push(textRun(label, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
+	parts.push(spell(label, dateField.x, dateField.y, TEXT_SIZE.field, TRACKING.field));
 
-	parts.push(textRun('STW', codeField.x, codeField.y, TEXT_SIZE.field, TRACKING.field));
+	parts.push(spell('STW', codeField.x, codeField.y, TEXT_SIZE.field, TRACKING.field));
 
 	const parts4 = stopwatchParts(state.stopwatchMs ?? 0);
 
 	const mainText = `${pad(parts4.hours)}${SEPARATOR}${pad(parts4.minutes)}`;
 	const subText = `${SEPARATOR}${pad(parts4.seconds)}.${pad(parts4.hundredths)}`;
 
-	parts.push(textRun(mainText, FACE.wideLeft, FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime));
-	parts.push(textRun(subText, subFieldX(subText), FACE.row.subY, TEXT_SIZE.subSecond, TRACKING.subSecond));
+	parts.push(spell(mainText, FACE.wideLeft, FACE.row.y, TEXT_SIZE.mainTime, TRACKING.mainTime));
+	parts.push(spell(subText, subFieldX(subText), FACE.row.subY, TEXT_SIZE.subSecond, TRACKING.subSecond));
 
 	// The rollover marker. The stopwatch resets to zero and keeps running at its 24-hour limit
 	// (SW-8), and without a marker the reading would simply look wrong. `SPL` takes precedence,
@@ -712,7 +761,7 @@ function fieldsStopwatch(state: DisplayState): string[] {
 	// slot at x 340 cannot hold a three-glyph run without crossing the LCD's right margin, and `24H`
 	// is three glyphs — which the LCD-bounds test reported the first time it was tried there.
 	if (state.stopwatchWrapped && !state.stopwatchSplit) {
-		parts.push(textRun('24H', 166, FACE.row.subY, TEXT_SIZE.field, TRACKING.field));
+		parts.push(spell('24H', 166, FACE.row.subY, TEXT_SIZE.field, TRACKING.field));
 	}
 
 	return parts;

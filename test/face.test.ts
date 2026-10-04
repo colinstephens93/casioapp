@@ -21,7 +21,7 @@ import { describe, it } from 'node:test';
 import { renderFace, type DisplayState } from '../src/renderer/face.ts';
 import { stateFor, scenarios } from '../src/renderer/preview.ts';
 import { CELL_HEIGHT, CELL_WIDTH, textWidth } from '../src/shared/svg.ts';
-import { FACE, TEXT_SIZE, TRACKING } from '../src/shared/theme.ts';
+import { FACE, TEXT_SIZE, TRACKING, themeCss } from '../src/shared/theme.ts';
 import { CITIES } from '../src/shared/catalog.ts';
 import { formatDay, formatMonthDay } from '../src/shared/time.ts';
 
@@ -79,6 +79,18 @@ function everyFace(): { title: string; clock: '12h' | '24h'; svg: string }[] {
 		}
 	}
 	return out;
+}
+
+/**
+ * A rendered face with its `<style>` block removed.
+ *
+ * Assertions about *markup* must not be able to match the stylesheet. The stylesheet names classes such
+ * as `flashing`, `pushed` and `alerting` in its selectors, so a substring search over the whole SVG
+ * finds the rule whether or not the element is present — a false positive that appeared the moment the
+ * stylesheet moved inside the SVG. Use this for anything asking "is this drawn?".
+ */
+function faceMarkup(state: DisplayState, route: 'sprite' | 'flat' = 'sprite'): string {
+	return renderFace(state, route).replace(/<style>[\s\S]*?<\/style>/, '');
 }
 
 describe('rendering produces well-formed markup', () => {
@@ -450,23 +462,29 @@ describe('conditional elements appear only when they should', () => {
 	});
 
 	it('marks the pressed pushers and the chord (INT-8)', () => {
-		const released = renderFace(baseState());
+		// Scoped to the markup, excluding the `<style>` block. The stylesheet legitimately *names* these
+		// classes — `.pusher.pushed`, `.alm-indicator.alerting` — so a naive substring search over the
+		// whole SVG finds the rule and reports a press that is not there. The tests were right about what
+		// they meant and wrong about where they looked; they only started failing when the stylesheet moved
+		// into the SVG, which is also why the bug it fixed went unnoticed for so long: the same rule meant
+		// the *appearance* was missing for exactly the classes these assertions were checking.
+		const released = faceMarkup(baseState());
 		assert.equal(released.includes('pushed'), false);
 
-		const pressed = renderFace(baseState({ pressed: ['adjust'] }));
+		const pressed = faceMarkup(baseState({ pressed: ['adjust'] }));
 		assert.equal(pressed.includes('pusher-adjust pushed'), true);
 		assert.equal(pressed.includes('pusher-light pushed'), false);
 
-		const chord = renderFace(baseState({ pressed: ['adjust', 'light'], chord: true }));
+		const chord = faceMarkup(baseState({ pressed: ['adjust', 'light'], chord: true }));
 		assert.equal(chord.includes('pusher-adjust pushed'), true);
 		assert.equal(chord.includes('pusher-light pushed'), true);
 	});
 
 	it('blinks the alarm indicator only while an alarm sounds (ALM-8)', () => {
-		const quiet = renderFace(baseState({ alarmArmed: true }));
-		const sounding = renderFace(baseState({ alarmArmed: true, alerting: true }));
+		const quiet = faceMarkup(baseState({ alarmArmed: true }));
+		const sounding = faceMarkup(baseState({ alarmArmed: true, alerting: true }));
 		assert.ok(quiet.includes('alm-indicator'));
-		assert.equal(quiet.includes('alerting'), false);
+		assert.equal(quiet.includes('alerting'), false, 'no alerting class while quiet');
 		assert.ok(sounding.includes('alm-indicator alerting'));
 	});
 
@@ -589,6 +607,200 @@ describe('formatting reaches the face intact', () => {
 		assert.match(day, /^[A-Z]{3} \d{1,2}$/);
 		assert.match(monthDay, /^\d{1,2}-\d{1,2}$/);
 	});
+});
+
+/**
+ * The face must carry its own appearance.
+ *
+ * ## The bug this exists for
+ *
+ * The stylesheet lived in `src/renderer/preview-css.ts` and was inlined into the preview **page**, while
+ * `renderFace()` embedded only the custom-property block. So the class names travelled with the SVG and
+ * the rules that give them appearance did not, and the face was unstyled everywhere except the one place
+ * it was being reviewed:
+ *
+ * - the widget would have drawn black glyphs and black map land on the pale LCD;
+ * - an SVG saved on its own had no colours at all — which is how it was being inspected, and the
+ *   rasteriser only appeared to work because it hard-codes the same table a second time in Python;
+ * - and in the user's browser the digits were invisible.
+ *
+ * Nothing caught it because every test asserted on *geometry* and every visual check went through the
+ * preview page or the rasteriser. The rule that was missing is the one this test states: a class the face
+ * emits must have a rule in the stylesheet the face carries.
+ */
+describe('the face carries its own stylesheet', () => {
+	/** Class names the markup uses, excluding the structural ones that need no styling. */
+	function emittedClasses(svg: string): Set<string> {
+		const names = new Set<string>();
+		for (const match of svg.matchAll(/class="([^"]+)"/g)) {
+			for (const name of (match[1] ?? '').split(/\s+/)) {
+				if (name) {
+					names.add(name);
+				}
+			}
+		}
+		return names;
+	}
+
+	/** Selector class names the stylesheet defines a rule for. */
+	function styledClasses(css: string): Set<string> {
+		const names = new Set<string>();
+		for (const match of css.matchAll(/\.([a-zA-Z][\w-]*)/g)) {
+			names.add(match[1] as string);
+		}
+		return names;
+	}
+
+	it('defines a rule for every class it emits', () => {
+		const state = baseState();
+		const svg = renderFace(state, 'sprite');
+		const css = themeCss();
+
+		const emitted = emittedClasses(svg);
+		const styled = styledClasses(css);
+
+		// Classes with no appearance of their own, named explicitly so that a *new* unstyled class fails
+		// here instead of being quietly tolerated:
+		//
+		//   watch, fields, indicators, subdial, world-map, lcd-content   grouping wrappers
+		//   pusher-adjust, pusher-light, pusher-mode, pusher-search      the hit target's identity
+		//
+		// The four pusher classes are load-bearing but not visual: `renderer/index.ts` finds a press with
+		// `target.closest('.pusher-adjust')` and so on, and all four are painted by the shared `.pusher`
+		// rule. They are the difference between a widget you can click and one you cannot, which is worth
+		// stating — an "unused class" that gets tidied away would break every pusher.
+		const structural = new Set([
+			'watch',
+			'fields',
+			'indicators',
+			'subdial',
+			'world-map',
+			'lcd-content',
+			'pusher-adjust',
+			'pusher-light',
+			'pusher-mode',
+			'pusher-search',
+		]);
+
+		const unstyled = [...emitted].filter((name) => !styled.has(name) && !structural.has(name)).sort();
+		assert.deepEqual(
+			unstyled,
+			[],
+			`these classes are emitted by the face but have no rule in the stylesheet it carries: ${unstyled.join(', ')}`,
+		);
+	});
+
+	it('embeds the rules inside the SVG, not only the tokens', () => {
+		// The specific regression: `themeCss()` returning only the variable block. Asserted on the
+		// rendered output rather than on `themeCss()` alone, because what matters is what a renderer
+		// receives.
+		const svg = renderFace(baseState(), 'sprite');
+		const style = /<style>([\s\S]*?)<\/style>/.exec(svg)?.[1] ?? '';
+
+		assert.ok(style.includes('--segment-on'), 'the tokens are there');
+		// A rule that consumes a token — if this is absent the tokens are defined and unused, which is
+		// exactly the state the bug left the face in.
+		assert.match(style, /\.lit\s*\{[^}]*var\(--segment-on\)/, 'and a rule that uses them');
+		assert.match(style, /\.case-body\s*\{[^}]*var\(--case-body\)/, 'including the case');
+	});
+
+	it('gives the same stylesheet to both glyph routes', () => {
+		const sprite = renderFace(baseState(), 'sprite');
+		const flat = renderFace(baseState(), 'flat');
+		for (const svg of [sprite, flat]) {
+			assert.match(svg, /\.lit\s*\{/, 'both routes need the segment rule');
+		}
+	});
+});
+
+/**
+ * The two glyph routes.
+ *
+ * ## Why both are tested, given only one is used
+ *
+ * The digits came out **blank in a real browser** while every direct shape on the same page drew, and
+ * the development rasteriser (`scripts/svg_to_png.py`) drew them perfectly — because it re-implements
+ * the sprite lookup itself instead of following the SVG rules. So the fault was invisible to every check
+ * in this suite as well. The `flat` route was written as the way out, and these tests hold it to the
+ * property that matters: it must contain **no reference of any kind**, because a reference is the only
+ * thing that failed.
+ *
+ * A test cannot tell me which route a browser renders. What it can do is stop the flat route decaying
+ * back into something reference-based, and stop the sprite route being deleted before the browser
+ * question is settled.
+ */
+describe('the glyph routes (flat vs sprite)', () => {
+	it('draws the same reading on both routes', () => {
+		// The visible content must not depend on the route. Anything else would mean the fix changes what
+		// the watch shows, which would be a much larger change than a rendering workaround.
+		//
+		// The comparison is on the **parsed geometry**, not on markup counts. `class="lit"` appears once
+		// per lit part in the flat route, but in the sprite route it appears throughout the sprite
+		// *definitions* — every character in the alphabet contributes several — so the two totals are not
+		// comparable and asserting on them tests the wrong thing. (The first version of this test did
+		// exactly that and failed, correctly.)
+		const state = baseState();
+		const sprite = renderFace(state, 'sprite');
+		const flat = renderFace(state, 'flat');
+
+		/** Every coordinate pair the route puts on the face, as `segment paths`. */
+		const polygonCount = (svg: string): number => (svg.match(/<path[^>]*class="lit"/g) ?? []).length;
+
+		// The sprite route keeps its lit parts inside `<symbol>` definitions, so it has none at the top
+		// level; what proves it draws is that the sprite is present and the instances reference it.
+		assert.equal(polygonCount(sprite), 0, 'the sprite route draws through references, not inline');
+		assert.ok(
+			polygonCount(flat) > 20,
+			`the flat route must inline the drawn segments, found ${polygonCount(flat)}`,
+		);
+		// A clock at 24-hour with a date, a city code and indicators is well over twenty segments; the
+		// bound is deliberately loose so a layout change does not make this brittle.
+	});
+
+	it('the flat route contains no <use> and no <symbol>', () => {
+		// The whole point. A `<use>` reappearing here — even one — re-introduces the construct that was
+		// blank in the browser, and it would do so invisibly, because nothing else in the suite can see it.
+		const flat = renderFace(baseState(), 'flat');
+		assert.equal(flat.includes('<use'), false, 'the flat route references nothing');
+		assert.equal(flat.includes('<symbol'), false, 'and defines no symbols to reference');
+	});
+
+	it('the sprite route still carries the sprite, so it was not silently broken', () => {
+		// The converse guard: the flat work must not have gutted the route that may yet turn out to be the
+		// one the browser wants.
+		const sprite = renderFace(baseState(), 'sprite');
+		assert.ok(sprite.includes('<symbol'), 'the sprite route still defines its symbols');
+		assert.ok(sprite.includes('<use'), 'and still instances them');
+	});
+
+	it('does not leak the route between renders', () => {
+		// `activeRoute` is module scope, so a render that fails part-way must not leave the next one
+		// drawing the wrong way. The order here is the one that would expose a leak.
+		const flatFirst = renderFace(baseState(), 'flat');
+		const spriteSecond = renderFace(baseState(), 'sprite');
+		assert.equal(flatFirst.includes('<use'), false, 'flat stays flat');
+		assert.ok(spriteSecond.includes('<use'), 'and the next sprite render is unaffected');
+	});
+
+	it('positions flat glyphs where the sprite route puts them', () => {
+		// A flat glyph is an absolutely-positioned path, so its coordinates are computed here rather than
+		// by the renderer. If the two routes disagree about the origin, the flat face would still draw —
+		// just in the wrong place, which is exactly the sort of thing that looks fine at a glance.
+		const state = baseState();
+		const coordinates = (svg: string): number[] =>
+			[...svg.matchAll(/<path[^>]*d="M (-?[\d.]+) (-?[\d.]+)/g)]
+				.map((match) => [Number(match[1]), Number(match[2])] as const)
+				.flatMap((pair) => [...pair]);
+
+		const flatFirst = coordinates(renderFace(state, 'flat'))[0];
+		assert.equal(typeof flatFirst, 'number', 'the flat route emits positioned paths');
+		// Every coordinate must be finite and inside the case, or a glyph has escaped the face.
+		for (const value of coordinates(renderFace(state, 'flat'))) {
+			assert.ok(Number.isFinite(value), 'coordinates are finite');
+			assert.ok(value >= -10 && value <= FACE.width + 10, `coordinate ${value} is off the case`);
+		}
+	});
+});
 
 /**
  * A glyph's character from the sprite symbol id.
@@ -787,5 +999,4 @@ describe('the city name on the World Time screen (WLD-1)', () => {
 			}
 		}
 	});
-});
 });

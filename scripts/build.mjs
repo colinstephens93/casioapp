@@ -29,6 +29,9 @@ copyStatic();
 
 run('bundle-preview.mjs', 'preview bundle');
 run('make-preview.mjs', 'preview page');
+// The route probe: one face drawn each way, so a human can say which construct a real browser renders.
+// Temporary, and it goes when the question is settled — see the header of `src/renderer/flat-probe.ts`.
+run('make-flat-probe.mjs', 'route probe');
 
 // The preview's inline script is emitted inside a template string, so neither `tsc` nor the unit
 // tests ever parse it. This is the only thing standing between a typo there and a page that

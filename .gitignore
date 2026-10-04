@@ -7,3 +7,8 @@ out/
 .edge-profile/
 _tmp*.svg
 *.log
+
+# Inputs, not deliverables: user screenshots and reference photography of the real watch.
+# Kept on disk because they are how the design gets settled, but they are not part of the widget.
+notes/
+*.webp

@@ -3,20 +3,24 @@
 A chronological record of what has been built, what was learned, and what is verified. Written for
 someone picking this up cold. For *how to work on it*, see [HANDOFF.md](HANDOFF.md).
 
-Last updated: after the Electron shell (M1, and M8's window half).
+Last updated: after the desktop-testing session of 2026-10-03.
+
+> **Starting fresh? Read [NEXT-SESSION.md](NEXT-SESSION.md) first.** It is short, current, and says what
+> to do next. This file is the history.
 
 ## At a glance
 
 | Metric | Value |
 |---|---|
-| Tests | **420 passing**, 0 failing, across 91 suites and 14 files |
+| Tests | **429 passing**, 0 failing, across 93 suites and 14 files |
 | Typecheck | Clean on all four `tsconfig` files, including the Electron main process |
 | Build | Clean, single pass, and self-verifying: it verifies the preview page *and* the widget page |
 | Screens | All five (Timekeeping, World Time, Alarm, Timer, Stopwatch) plus six setting screens |
-| Shell | Window, tray, config file, notifications, context menu and packaging are written; their **wiring is tested against a fake Electron**, but they have never run — ENVIRONMENT.md §9 is the checklist |
-| Can the watch run? | **No** — see [ENVIRONMENT.md](ENVIRONMENT.md). Its *drawing* can be rendered and inspected, and its logic is fully tested. |
+| Shell | Written and its wiring tested against a fake Electron — **but never executed.** ENVIRONMENT.md §9 is the checklist |
+| Colour fidelity | **Wrong at the case level**: the widget is black, the real watch is brushed silver. See the last section |
+| Can the watch run? | **Not yet tried.** The launcher was broken until this session |
 | Verify everything | `npm run check` — typecheck, build, tests |
-| Git | Committed through M7 (`continued dev`); everything since is uncommitted. |
+| Git | Committed through this session; `docs/NEXT-SESSION.md` lists what remains |
 
 ### Test breakdown
 
@@ -24,7 +28,7 @@ Last updated: after the Electron shell (M1, and M8's window half).
 |---|---|---|
 | `test/time.test.ts` | 35 | Offsets, wall clock, ±1 day marker, DST, formatting, zone validation |
 | `test/watch.test.ts` | 10 | The zone-and-clock derivation: offsets, gap, day marker, DST label move together |
-| `test/face.test.ts` | 45 | Face composition, layout bounds, glyph overlap, glyph overflow, name fitting |
+| `test/face.test.ts` | 52 | Face composition, layout bounds, glyph overlap, glyph overflow, name fitting |
 | `test/map.test.ts` | 28 | Land bitset, band placement, Home City fallback, fitting |
 | `test/machine.test.ts` | 69 | Every pusher on every screen: press, hold and chord; the five screens' rules |
 | `test/alarms.test.ts` | 18 | The five alarms, the crossing test, the midnight and DST cases, repair |
@@ -32,7 +36,7 @@ Last updated: after the Electron shell (M1, and M8's window half).
 | `test/stopwatch.test.ts` | 18 | The three behaviours, the 24-hour rollover, formatting |
 | `test/gestures.test.ts` | 25 | Press, hold at each real duration, chord, repeat cadence |
 | `test/controller.test.ts` | 62 | Cadence, the battery model, the seconds reset, restart, notifications, the host's controls |
-| `test/shell.test.ts` | 36 | The config schema, its repair, the atomic write, window clamping, the toast payload and XML |
+| `test/shell.test.ts` | 37 | The config schema, its repair, the atomic write, window clamping, the toast payload and XML |
 | `test/wiring.test.ts` | 23 | The built shell against a fake Electron: window options, tray menu, notification, IPC surface, boot |
 | `test/catalog.test.ts` | 19 | The watch's 49-code table, extended zones, sorting and exclusion |
 | `test/glyphs.test.ts` | 18 | Glyph coverage, digit uniqueness, collision audit |
@@ -522,3 +526,75 @@ Expect problems. The three most likely, in order:
 
 After that: colours, segment proportions, and the case ratio — the four things in "Known rough edges"
 that need eyes rather than tests.
+
+
+## The desktop session: the face had no stylesheet, and the watch is the wrong colour
+
+The first time any of this was looked at in a real browser. Two findings, and the second is larger than
+the first.
+
+### The stylesheet never reached the SVG
+
+The user reported blank digits and "some white text off". The dividing line in their screenshot was
+exact: `<circle>`, `<line>`, `<rect>` and `<text>` all drew; every glyph and indicator — everything drawn
+through `<symbol>` instanced by `<use>` — was missing.
+
+That first diagnosis was wrong. The construct was innocent. Chasing it down produced a much bigger fault:
+
+- the face's complete stylesheet lived in `src/renderer/preview-css.ts`, inlined into the preview **page**;
+- `renderFace()` embedded only `themeCss()`, which emits the CSS **variables** and **no rules that use
+  them**.
+
+So the class names travelled with the SVG and the appearance did not. The **widget would have drawn
+black glyphs and black map land on a pale LCD, and a black case on a black background** — not a subtle
+fault, a completely broken watch. Any SVG opened on its own had no colours at all, which is how the face
+had been inspected for the whole project.
+
+**Nothing caught it because there was no assertion that the face carries the styles it references.** Every
+test checked geometry; every visual check went through the preview page, which supplied the missing rules
+by accident.
+
+**Fixed** by moving `FACE_CSS` into `theme.ts` beside the tokens, so `themeCss()` returns variables *plus*
+rules and the SVG is self-contained. **Guarded** by a test that every class the face emits has a rule in
+the stylesheet it carries, mutation-verified by reinstating the bug.
+
+A side effect worth recording: two existing tests began failing, because they searched the whole SVG for
+`pushed` and `alerting` and started matching the new *CSS selectors* rather than markup. They were right
+about what they meant and wrong about where they looked; they now go through a `faceMarkup()` helper that
+strips the stylesheet first.
+
+### The colour model is wrong at the case level
+
+The user supplied a photograph of the real watch. The AE-1200WH is a **stainless steel** watch: brushed
+silver case and bezel with visible screws, white lettering on a black bezel band, a small grey-green LCD
+window, a silver subdial with dark markings, and a discrete framed map panel.
+
+What is built is a black plastic-looking watch with gold lettering and a large pale-green LCD. The single
+thing a person recognises about this watch — that it is a silver steel Casio — is absent. This was parked
+as a subjective "I don't like the design" earlier in the session and should not have been: it is a
+fidelity defect, and the reference photograph settles it. See `docs/NEXT-SESSION.md` §2.
+
+### Three times a tool agreed with itself instead of with reality
+
+The most transferable lesson in the project.
+
+1. **`scripts/svg_to_png.py` does not implement SVG.** It re-implements the sprite lookup and hard-codes
+   the class-to-colour table a second time. It drew a *perfect* face while a real browser drew a green
+   rectangle, so it was structurally incapable of finding either the missing stylesheet or anything else
+   about styling. It is useful for geometry and layout, and it is now labelled as such in its own
+   docstring.
+2. **The fake Electron asserts intent, not effect.** A fake of the wrong shape is worse than no fake:
+   `isDestroyed` was a property where Electron has a method, which made a *correct* guard look like a bug.
+3. **A verifier that crashes on its own check reports a failure that is not the code's.** A `RegExp` built
+   from `require(` threw inside the widget verifier; it now uses `RegExp.escape`.
+
+Also added: `scripts/svg_to_png.py --label`, which stamps a real font onto the raster **after** the SVG
+has been drawn, so a review image cannot be affected by the thing under review. Its first version sized
+the font from width alone and the watermark ate the entire picture.
+
+### The launcher never worked
+
+`scripts/run.mjs` hard-coded `dist/main/main.js` while the main process is CommonJS and the build emits
+`main.cjs`. `npm start` therefore failed on its existsSync check and told the user to run `npm run build`
+immediately after the build had succeeded. Fixed, and `test/shell.test.ts` now asserts that the launcher,
+`package.json`'s `main`, and the build all agree.

@@ -107,6 +107,30 @@ describe('the build configuration', () => {
 		assert.match(buildSource, /verify-preview\.mjs/, 'the build runs the preview verifier');
 	});
 
+	it('launches the entry point the build actually emits', () => {
+		// `run.mjs` hard-coded `dist/main/main.js`, but the main process is CommonJS so `tsc` emits
+		// `main.cjs`. The launcher's own check then failed on every run and told the user to run
+		// `npm run build` immediately after the build had succeeded — the worst possible first
+		// impression, and nobody would suspect the path. `package.json`'s `main` and the launcher have to
+		// agree with what the build writes.
+		const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8')) as { main?: string };
+		assert.equal(pkg.main, 'dist/main/main.cjs', 'package.json points at the emitted entry');
+
+		const runSource = readFileSync(join(ROOT, 'scripts', 'run.mjs'), 'utf-8');
+		// The emitted name is tried first, which is the part that has to be right.
+		assert.match(
+			runSource,
+			/for \(const name of \['main\.cjs'/,
+			'the launcher looks for main.cjs first, not main.js',
+		);
+		// And no *bare* hard-coded entry path survives anywhere.
+		assert.equal(
+			/join\(root, 'dist', 'main', 'main\.js'\)/.test(runSource),
+			false,
+			'the launcher must not hard-code dist/main/main.js — that is the bug this test exists for',
+		);
+	});
+
 	it('keeps the main tsconfig on Node16, which the dynamic import needs', () => {
 		// `module: "CommonJS"` downlevels `import()` to `require()`, which cannot load the ESM half. The
 		// build would succeed and the app would die at startup with ERR_REQUIRE_ESM. Asserted here as well
