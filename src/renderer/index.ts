@@ -1,48 +1,31 @@
 /**
- * The widget's renderer entry point.
+ * The widget page.
  *
- * This is the whole watch. It builds a `WatchController` and draws it — the **same object the browser
- * preview runs**, which is plan decision 1 and the reason nearly everything in this project is
- * verifiable in a sandbox with no desktop.
- *
- * What this file adds over the preview is only what a real widget needs:
- *
- * - persistence through the preload bridge, so the settings are a file a human can edit (PRS-4) rather
- *   than `localStorage` inside a browser profile;
- * - notifications, by telling the main process when an alert fires (ALM-10);
- * - the letterboxed layout (WIN-7, WIN-8) and the drag region (WIN-2);
- * - the native context menu (INT-7).
- *
- * ## Why the face is redrawn wholesale
- *
- * The same reasoning as the preview: the face is a few hundred SVG elements, and redrawing it costs
- * nothing measurable at the tick rates the controller chooses. Diffing would add a second code path
- * that could disagree with the first. WIN-10 is satisfied by the *cadence* rather than by the redraw:
- * an idle clock ticks once a second and does no other work.
- *
- * ## Why the pushers are wired by class rather than by element
- *
- * The face is regenerated on every tick, so any listener attached to a pusher element is discarded a
- * second later. Events are therefore delegated from a container that survives — and the hit test is on
- * the SVG's own class names, which is what the geometry was authored for.
+ * The window around this page is the desktop shell. What it shows is the world-time board: the
+ * same arrangement as the Timan terminal, drawn as HTML so it can be dragged and resized without
+ * a console. The watch face is still what the preview page draws; this file no longer uses it.
  */
-import { WatchController } from '../shared/controller.ts';
-import { renderFace } from './face.ts';
-import type { ContextAction, RestoredState } from '../preload/preload.cts';
+import { renderBoard } from './board.ts';
+import {
+	cycleDst,
+	focusRow,
+	moveFavorite,
+	moveSelection,
+	parseDesk,
+	serialiseDesk,
+	toggleClock,
+	toggleFavorite,
+	type DeskResult,
+	type DeskState,
+} from '../shared/desk.ts';
+import { localZone } from '../shared/time.ts';
+import type { RestoredState } from '../preload/preload.cts';
 
-/** The preload bridge, as `preload.cts` exposes it. Absent when the page is opened in a browser. */
 interface WidgetBridge {
-	alert(message: {
-		kind: 'alarm' | 'timer';
-		alarmId?: number;
-		at: number;
-		homeOffset: number;
-	}): void;
 	saveState(serialised: string): void;
 	restore(): Promise<RestoredState>;
-	/** INT-7: the page cannot pop a native menu, so it asks the main process for one. */
 	showMenu(): void;
-	onContext(listener: (action: ContextAction) => void): () => void;
+	setSize(width: number, height: number): void;
 }
 
 declare global {
@@ -51,157 +34,231 @@ declare global {
 	}
 }
 
-const PUSHERS = ['adjust', 'light', 'mode', 'search'] as const;
-type Pusher = (typeof PUSHERS)[number];
-
-/** True when the name is one of the four pushers, so an untyped hit test result is narrowed safely. */
-function isPusher(name: string | null): name is Pusher {
-	return name !== null && (PUSHERS as readonly string[]).includes(name);
+interface BatteryReading {
+	level: number;
+	charging: boolean;
 }
 
-/**
- * A store that writes through the preload bridge, so the settings land in the config file.
- *
- * The controller's `WatchStore` is `load`/`save` returning and taking a string, and the main process
- * treats that string as opaque. That is deliberate: the watch's schema is the renderer's business, and
- * the main process has no reason to parse it — which is also why a corrupt watch blob cannot stop the
- * widget from starting.
- */
-function bridgeStore(bridge: WidgetBridge | undefined, initial: string) {
-	let value = initial;
-	return {
-		load: (): string | null => value,
-		save: (next: string): void => {
-			value = next;
-			bridge?.saveState(next);
-		},
-	};
+const SAVED_KEY = 'worldtime.desk';
+
+function readSaved(): string {
+	try {
+		return localStorage.getItem(SAVED_KEY) ?? '';
+	} catch {
+		return '';
+	}
+}
+
+function writeSaved(serialised: string): void {
+	try {
+		localStorage.setItem(SAVED_KEY, serialised);
+	} catch {
+		// A blocked store just means the next open starts from the defaults.
+	}
+}
+
+function clampSize(value: number, min: number, max: number): number {
+	return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function powerLine(battery: BatteryReading | null): string {
+	if (!battery) {
+		return '';
+	}
+	const percent = `${Math.round(battery.level * 100)}%`;
+	return battery.charging ? `${percent} BATTERY · CHARGING` : `${percent} · BATTERY`;
 }
 
 async function main(): Promise<void> {
-	// The case is the wrapper that letterboxes; the SVG goes inside it. Neither exists until this runs,
-	// which is why the entry point resolves and checks rather than assuming.
-	const host = document.getElementById('case');
-	if (!host) {
+	const desk = document.getElementById('desk');
+	const board = document.getElementById('board');
+	const grip = document.getElementById('resize');
+	if (!desk || !board || !grip) {
 		return;
 	}
 
 	const bridge = window.widget;
+	// The desktop shortcut opens this page in Edge, which has no preload bridge. The board is
+	// kept in localStorage there. Electron still saves through the bridge, into the config file.
 	const restored: RestoredState = bridge
 		? await bridge.restore().catch(() => ({ watch: '', battery: 1, configPath: '' }))
-		: { watch: '', battery: 1, configPath: '' };
+		: { watch: readSaved(), battery: 1, configPath: '' };
 
-	const watch = new WatchController({
-		now: () => Date.now(),
-		// `performance.now()` is monotonic, which is what the stopwatch needs: a wall-clock correction
-		// must not change how long something took (NFR-5, plan decision 5).
-		mono: () => performance.now(),
-		setTimer: (fn, ms) => {
-			const handle = setTimeout(fn, ms);
-			return () => clearTimeout(handle);
-		},
-		store: bridgeStore(bridge, restored.watch),
-		notify: (alert) => {
-			// ALM-10. The renderer knows *that* an alarm fired and what the Home City reads; the main
-			// process phrases the toast. Sending the offset rather than re-deriving a zone means the
-			// notification and the face cannot disagree about the time.
-			const face = watch.faceState();
-			bridge?.alert({
-				kind: alert.kind === 'timer' ? 'timer' : 'alarm',
-				...(alert.alarmId === undefined ? {} : { alarmId: alert.alarmId }),
-				at: Date.now(),
-				homeOffset: face.homeOffset,
-			});
-		},
-	});
+	let state: DeskState = parseDesk(restored.watch);
+	let notice = '';
+	let noticeTimer = 0;
+	let battery: BatteryReading | null = null;
+	let scrollTop = 0;
 
-	// BAT-4: the level was stored with the rest of the configuration.
-	watch.setBattery(restored.battery);
-
-	const draw = (): void => {
-		// The whole face, replaced. See the module comment for why this is not diffed.
-		host.innerHTML = renderFace(watch.faceState());
+	// `follow` scrolls the selection into view. A one-second repaint must not, or the list jumps
+	// back while the user is reading a city further down.
+	const paint = (follow: boolean): void => {
+		const held = board.querySelector('.list')?.scrollTop ?? scrollTop;
+		board.innerHTML = renderBoard(state, new Date(), localZone(), powerLine(battery), notice);
+		const list = board.querySelector('.list');
+		if (!list) {
+			return;
+		}
+		if (follow) {
+			list.querySelector('.row.selected')?.scrollIntoView({ block: 'nearest' });
+		} else {
+			list.scrollTop = held;
+		}
+		scrollTop = list.scrollTop;
 	};
 
-	watch.subscribe(() => {
-		draw();
-		// PRS-1: persist on every change the controller reports. A tick does not change anything worth
-		// saving, and the controller does not emit for one.
-		watch.save();
-	});
+	const persist = (): void => {
+		const serialised = serialiseDesk(state);
+		if (bridge) {
+			bridge.saveState(serialised);
+			return;
+		}
+		writeSaved(serialised);
+	};
 
-	/* ---------------------------------------------------------------------------------------- */
-	/* Pushers (WIN-2, INT-4, INT-8)                                                             */
-	/* ---------------------------------------------------------------------------------------- */
+	const commit = (result: DeskResult): void => {
+		state = result.state;
+		notice = result.notice;
+		window.clearTimeout(noticeTimer);
+		if (notice) {
+			noticeTimer = window.setTimeout(() => {
+				notice = '';
+				paint(false);
+			}, 2500);
+		}
+		persist();
+		paint(true);
+	};
 
-	/**
-	 * The pusher under the pointer.
-	 *
-	 * `closest` walks up from the event target, and the SVG pushers carry `pusher-<name>` classes. The
-	 * hit area is the bar, which is what the user sees — not the whole case edge.
-	 */
-	function pusherAt(target: EventTarget | null): Pusher | null {
+	const apply = (result: DeskState): void => {
+		commit({ state: result, notice: '' });
+	};
+
+	desk.addEventListener('click', (event) => {
+		const target = event.target;
 		if (!(target instanceof Element)) {
-			return null;
+			return;
 		}
-		for (const pusher of PUSHERS) {
-			if (target.closest(`.pusher-${pusher}`)) {
-				return pusher;
+		const action = target.closest('[data-action]');
+		if (action instanceof HTMLElement) {
+			const name = action.dataset['action'];
+			if (name === 'clock') {
+				apply(toggleClock(state));
+			} else if (name === 'favorite') {
+				commit(toggleFavorite(state, localZone()));
+			} else if (name === 'dst') {
+				commit(cycleDst(state, localZone(), new Date()));
 			}
+			return;
 		}
-		return null;
-	}
+		const row = target.closest('[data-where]');
+		if (!(row instanceof HTMLElement)) {
+			return;
+		}
+		const where = row.dataset['where'];
+		if (where !== 'local' && where !== 'favorite' && where !== 'catalog') {
+			return;
+		}
+		apply(focusRow(state, where, row.dataset['zone'] ?? ''));
+	});
 
-	// Pointer capture, so a press that slides off the pusher still releases it. Without this the
-	// controller would hold a pusher down forever and the gesture reader would eventually fire a hold.
-	let active: Pusher | null = null;
+	window.addEventListener('keydown', (event) => {
+		if (event.altKey || event.ctrlKey || event.metaKey) {
+			return;
+		}
+		const local = localZone();
+		const at = new Date();
+		switch (event.key) {
+			case 'ArrowUp':
+				event.preventDefault();
+				apply(moveSelection(state, local, -1));
+				return;
+			case 'ArrowDown':
+				event.preventDefault();
+				apply(moveSelection(state, local, 1));
+				return;
+			case 'ArrowLeft':
+				event.preventDefault();
+				apply(moveFavorite(state, local, -1));
+				return;
+			case 'ArrowRight':
+				event.preventDefault();
+				apply(moveFavorite(state, local, 1));
+				return;
+			case 'f':
+			case 'F':
+				commit(toggleFavorite(state, local));
+				return;
+			case 'd':
+			case 'D':
+				commit(cycleDst(state, local, at));
+				return;
+			case 't':
+			case 'T':
+				apply(toggleClock(state));
+				return;
+			default:
+				return;
+		}
+	});
 
-	host.addEventListener('pointerdown', (event) => {
-		const pusher = pusherAt(event.target);
-		if (!pusher) {
+	desk.addEventListener('contextmenu', (event) => {
+		if (!bridge) {
 			return;
 		}
 		event.preventDefault();
-		active = pusher;
-		watch.down(pusher);
+		bridge.showMenu();
 	});
 
-	const release = (event: PointerEvent): void => {
-		if (active === null) {
+	grip.addEventListener('pointerdown', (event) => {
+		event.preventDefault();
+		grip.setPointerCapture(event.pointerId);
+		const origin = { x: event.screenX, y: event.screenY, w: window.outerWidth, h: window.outerHeight };
+		const move = (ev: PointerEvent): void => {
+			const width = clampSize(origin.w + ev.screenX - origin.x, 760, 1100);
+			const height = clampSize(origin.h + ev.screenY - origin.y, 540, 780);
+			if (bridge) {
+				bridge.setSize(width, height);
+			} else {
+				window.resizeTo(width, height);
+			}
+		};
+		const up = (ev: PointerEvent): void => {
+			grip.removeEventListener('pointermove', move);
+			grip.removeEventListener('pointerup', up);
+			grip.releasePointerCapture(ev.pointerId);
+		};
+		grip.addEventListener('pointermove', move);
+		grip.addEventListener('pointerup', up);
+	});
+
+	const pollBattery = (): void => {
+		const reader = navigator as Navigator & { getBattery?: () => Promise<BatteryReading> };
+		if (!reader.getBattery) {
 			return;
 		}
-		void event;
-		watch.up(active);
-		active = null;
+		void reader.getBattery().then((next) => {
+			battery = { level: next.level, charging: next.charging };
+			paint(false);
+		}).catch(() => {
+			battery = null;
+		});
 	};
-	host.addEventListener('pointerup', release);
-	host.addEventListener('pointercancel', release);
-	// A press that leaves the window entirely — dragged onto another display mid-gesture — must not
-	// leave the controller believing the pusher is still down.
-	window.addEventListener('blur', () => {
-		watch.cancelGestures();
-		active = null;
-	});
 
-	/* ---------------------------------------------------------------------------------------- */
-	/* The context menu (INT-7)                                                                  */
-	/* ---------------------------------------------------------------------------------------- */
+	paint(true);
+	// An old watch-face blob is not this board. Replace it once, so the next launch reads the board
+	// and not a payload this page will only ignore.
+	if (serialiseDesk(state) !== restored.watch) {
+		persist();
+	}
+	pollBattery();
+	window.setInterval(pollBattery, 30_000);
 
-	// The native menu is shown by the main process; the page only asks for it, because a right-click on
-	// the case is the trigger and `contextmenu` is the only event that sees it. A page cannot pop a
-	// native menu itself, which is why this is a bridge call rather than a DOM one.
-	window.addEventListener('contextmenu', (event) => {
-		event.preventDefault();
-		bridge?.showMenu();
-	});
-
-	bridge?.onContext((action: ContextAction) => {
-		// The tray and the context menu both route their watch-affecting actions here, so there is one
-		// implementation of each rather than one per menu.
-		watch.contextAction(action);
-	});
-
-	watch.start();
+	const tick = (): void => {
+		paint(false);
+		window.setTimeout(tick, 1000 - (Date.now() % 1000) + 20);
+	};
+	window.setTimeout(tick, 1000 - (Date.now() % 1000) + 20);
 }
 
 void main();

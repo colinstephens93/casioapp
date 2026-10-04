@@ -45,7 +45,10 @@ function walk(dir) {
 function resolveId(fromId, specifier) {
 	const parts = fromId.split('/');
 	parts.pop();
-	for (const segment of specifier.replace(/\.js$/, '').split('/')) {
+	// Source imports keep their `.ts` extension. The registry id has none, so both
+	// `.ts` and the `.js` TypeScript sometimes emits have to come off or the board
+	// throws "module not found" the moment the shortcut page loads.
+	for (const segment of specifier.replace(/\.(js|mjs|cjs|ts|cts|mts)$/, '').split('/')) {
 		if (segment === '.' || segment === '') {
 			continue;
 		}
@@ -117,5 +120,40 @@ const moduleBlock = modules
 const outDir = join(root, 'dist', 'preview');
 await mkdir(outDir, { recursive: true });
 await writeFile(join(outDir, 'bundle.js'), `${runtime}\n${moduleBlock}\n`, 'utf-8');
+
+// The desktop shortcut opens this file directly. Chrome blocks the renderer's ES module
+// imports on file://, and on this PC electron.exe crashes before it can show a window,
+// so the shortcut cannot depend on either. One classic script has the same board.
+const widgetDir = join(root, 'dist', 'renderer');
+await mkdir(widgetDir, { recursive: true });
+await writeFile(
+	join(widgetDir, 'widget.js'),
+	`${runtime}\n${moduleBlock}\nwindow.__modules.require('renderer/index');\n`,
+	'utf-8',
+);
+await writeFile(
+	join(widgetDir, 'widget.html'),
+	`<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+		/>
+		<title>World time</title>
+		<link rel="stylesheet" href="./styles.css" />
+	</head>
+	<body>
+		<div id="desk">
+			<div id="board"></div>
+			<div id="resize" title="Resize"></div>
+		</div>
+		<script src="./widget.js"></script>
+	</body>
+</html>
+`,
+	'utf-8',
+);
 
 console.log(`bundled ${modules.length} module(s) into dist/preview/bundle.js`);

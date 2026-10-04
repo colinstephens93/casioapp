@@ -49,12 +49,12 @@ for (const [what, relative] of [
 	}
 }
 
-// The case wrapper is what the letterbox maths and the drag region hang off. Without it the entry
-// point resolves nothing and returns, leaving a transparent window that looks like a crash.
-if (!html.includes('id="case"')) {
-	fail('index.html has no #case element — the entry point would find nothing to draw into');
+// The board is what the entry point draws into. Without it the script returns and the window stays
+// a blank transparent rectangle, which looks like a crash.
+if (!html.includes('id="desk"') || !html.includes('id="board"')) {
+	fail('index.html has no #desk/#board — the entry point would find nothing to draw into');
 } else {
-	ok('the case wrapper is present');
+	ok('the board is present');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -153,6 +153,34 @@ if (!existsSync(mainCjs)) {
 		fail('main.cjs neither imports nor requires its config module; one of the two should be there');
 	} else {
 		ok('main.cjs keeps a real dynamic import() for its ESM modules');
+	}
+}
+
+// The shortcut opens widget.html, not the Electron page. It has to be a classic script: the
+// module page cannot be double-clicked, because file:// module imports are blocked.
+const widgetHtmlPath = join(rendererDir, 'widget.html');
+const widgetJsPath = join(rendererDir, 'widget.js');
+if (!existsSync(widgetHtmlPath) || !existsSync(widgetJsPath)) {
+	fail('dist/renderer/widget.html or widget.js is missing — the desktop shortcut would open nothing');
+} else {
+	const widgetHtml = readFileSync(widgetHtmlPath, 'utf-8');
+	if (!widgetHtml.includes('id="desk"') || !widgetHtml.includes('id="board"') || !widgetHtml.includes('./widget.js')) {
+		fail('widget.html is not the board page');
+	} else if (!widgetHtml.includes('./styles.css') || !existsSync(join(rendererDir, 'styles.css'))) {
+		fail('widget.html is missing its stylesheet');
+	} else {
+		ok('the shortcut page is present');
+	}
+	const widgetJs = readFileSync(widgetJsPath, 'utf-8');
+	if (!widgetJs.includes("window.__modules.require('renderer/index')")) {
+		fail('widget.js never starts the board');
+	} else {
+		try {
+			new (await import('node:vm')).Script(widgetJs);
+			ok('the shortcut script parses');
+		} catch (error) {
+			fail(`widget.js failed to parse: ${error.message}`);
+		}
 	}
 }
 

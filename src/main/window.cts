@@ -19,12 +19,12 @@
  *    is an invisible box that eats every click over its rectangle. The case is opaque but the letterbox
  *    around it is not, and that is handled where the geometry is known: the renderer.
  *
- * ## Why the letterbox is the renderer's business
+ * ## Why the page fills the window
  *
- * WIN-7 and WIN-8: the device scales to fit, centred, and the leftover reads as bezel. That is a
- * *drawing* rule, so it lives in the CSS and the SVG. The window fills whatever rectangle it is given
- * with the case colour behind everything. The main process must not model the device's aspect ratio,
- * or two places would know it and they would drift.
+ * The board is a terminal panel, not a fixed-aspect watch case, so the page paints the whole
+ * rectangle. Transparency stays on so the rounded corners show the desktop rather than a square
+ * of window chrome. Size is clamped a little either side of the default: the panel has to stay
+ * legible, and it is not meant to become a full-screen application.
  */
 import { BrowserWindow, screen, shell } from 'electron';
 import { join } from 'node:path';
@@ -44,8 +44,20 @@ import type { Bounds, WidgetConfig } from './config.ts' with { 'resolution-mode'
  */
 const configModule = import('./config.js');
 
-/** The case's own colour, so the letterbox reads as bezel rather than as broken layout (WIN-7). */
-const LETTERBOX = '#0c0e0b';
+/** The board's own black, so a moment before the first paint is not a white flash. */
+const LETTERBOX = '#070a08';
+
+/**
+ * How far the window may move from its default size.
+ *
+ * A transparent frameless window has no native edge to grab, so the page asks for a size and this
+ * is the limit that request is allowed to reach.
+ */
+const WINDOW_LIMIT = { minWidth: 760, minHeight: 540, maxWidth: 1100, maxHeight: 780 } as const;
+
+function clampDimension(value: number, min: number, max: number): number {
+	return Math.min(max, Math.max(min, Math.round(value)));
+}
 
 export interface WindowCallbacks {
 	/** Fired when the window is hidden or shown, so the tray's label can follow. */
@@ -95,7 +107,12 @@ export class WidgetWindow {
 		const pure = await configModule;
 		this.pure = pure;
 
-		const bounds = pure.clampToWorkAreas(config.bounds, currentWorkAreas());
+		const sized = {
+			...config.bounds,
+			width: clampDimension(config.bounds.width, WINDOW_LIMIT.minWidth, WINDOW_LIMIT.maxWidth),
+			height: clampDimension(config.bounds.height, WINDOW_LIMIT.minHeight, WINDOW_LIMIT.maxHeight),
+		};
+		const bounds = pure.clampToWorkAreas(sized, currentWorkAreas());
 
 		const window = new BrowserWindow({
 			...bounds,
@@ -108,10 +125,12 @@ export class WidgetWindow {
 			skipTaskbar: true,
 			// WIN-5: the *normal* level, never `screen-saver`. R-4 is the risk this avoids.
 			alwaysOnTop: false,
-			minWidth: pure.MIN_SIZE.width,
-			minHeight: pure.MIN_SIZE.height,
+			minWidth: WINDOW_LIMIT.minWidth,
+			minHeight: WINDOW_LIMIT.minHeight,
+			maxWidth: WINDOW_LIMIT.maxWidth,
+			maxHeight: WINDOW_LIMIT.maxHeight,
 			backgroundColor: LETTERBOX,
-			title: 'casioapp',
+			title: 'World time',
 			webPreferences: {
 				preload: join(__dirname, '..', 'preload', 'preload.cjs'),
 				// NFR-6: context isolation on, node integration off. The preload is the only surface.
@@ -162,6 +181,26 @@ export class WidgetWindow {
 	/** The window's current rectangle, in screen coordinates. */
 	bounds(): Bounds | null {
 		return this.window?.getBounds() ?? null;
+	}
+
+	/**
+	 * Resizes from the page's corner grip.
+	 *
+	 * The renderer is not allowed to put the window anywhere, only to change its size, and only
+	 * inside `WINDOW_LIMIT`. Position stays where the user dragged it.
+	 */
+	resizeTo(width: number, height: number): void {
+		const window = this.window;
+		if (!window || !Number.isFinite(width) || !Number.isFinite(height)) {
+			return;
+		}
+		const current = window.getBounds();
+		window.setBounds({
+			x: current.x,
+			y: current.y,
+			width: clampDimension(width, WINDOW_LIMIT.minWidth, WINDOW_LIMIT.maxWidth),
+			height: clampDimension(height, WINDOW_LIMIT.minHeight, WINDOW_LIMIT.maxHeight),
+		});
 	}
 
 	show(): void {

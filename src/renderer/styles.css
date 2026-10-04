@@ -1,110 +1,337 @@
 /*
- * The widget's window: a transparent frame, the case letterboxed inside it, and the drag rules.
+ * The widget fills its window. The window is transparent so the rounded corners show the desktop;
+ * everything inside the board is the terminal colour, or a drag would show a hole.
  *
- * # Letterboxing (WIN-6, WIN-7, WIN-8)
- *
- * The device keeps its true proportions at every window size; the window's aspect ratio is not the
- * device's. So the case is scaled to the largest size that *fits* — `min()` of the two ratios — and
- * centred. Whatever is left over is painted the case's own colour, so an extreme window reads as
- * bezel rather than as broken layout. That is the whole of the rule, and it is four CSS lines.
- *
- * The case colour is duplicated from `THEME.caseBody` in `src/shared/theme.ts` because this file is
- * plain CSS and cannot import it. `test/face.test.ts` asserts the theme's value; a mismatch here would
- * show as a visible seam, which is the kind of thing a human notices immediately and a test cannot.
- *
- * # Dragging (WIN-2, plan risk R-2)
- *
- * The case is the drag handle and **only** the case. Every interactive child must opt out with
- * `no-drag`, or the drag region swallows its clicks — the classic failure of this pattern, and the one
- * the plan flags as high-likelihood. The pushers and the LCD are therefore explicitly `no-drag`: the
- * LCD is a click target (INT-3) and the pushers are the entire interface.
- *
- * The `no-drag` region is applied per *pusher*, not to the whole SVG, because the area between the
- * case edge and the pushers should still drag.
+ * Dragging is the board. The zone list, the footer buttons and the resize grip opt out, or a click
+ * that was meant to select a city would move the window instead.
  */
 
 html,
 body {
 	margin: 0;
-	padding: 0;
 	width: 100%;
 	height: 100%;
 	background: transparent;
 	overflow: hidden;
-	/* A desktop widget is not a document: selecting the case text would be a bug, not a feature. */
 	user-select: none;
 	-webkit-user-select: none;
 	cursor: default;
+	color: #c9f2b0;
+	font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
 }
 
-#root {
+#desk {
+	position: relative;
 	width: 100%;
 	height: 100%;
-	display: grid;
-	place-items: center;
-	/* WIN-7: the leftover area is the case material, not a gap. */
-	background: transparent;
-}
-
-/*
- * The case.
- *
- * `aspect-ratio` rather than a fixed height, so the device keeps its proportions however the window is
- * dragged; `min()` picks the binding constraint, which is what "the largest size that fits" means. The
- * ratio is `FACE.width` : `FACE.height` from `theme.ts` — 450 : 445, in tenths of a millimetre — and it
- * is the *device's* ratio, not the window's.
- */
-.case {
-	aspect-ratio: 450 / 445;
-	width: min(100%, calc(100cqh * 450 / 445));
-	max-width: 100%;
-	max-height: 100%;
-	display: grid;
-	place-items: center;
-	/* WIN-2: the case drags. */
 	-webkit-app-region: drag;
 }
 
-#root {
+#board {
+	position: relative;
+	box-sizing: border-box;
+	height: 100%;
+	padding: 14px 12px 10px;
+	display: grid;
+	grid-template-columns: 168px minmax(0, 1fr);
+	grid-template-rows: 156px minmax(210px, 1.25fr) minmax(110px, 1fr) auto;
+	gap: 10px 8px;
+	background: #070a08;
+	border: 1px solid #3a4a3c;
+	border-radius: 12px;
+	overflow: hidden;
+}
+
+.panel {
+	position: relative;
+	min-width: 0;
+	min-height: 0;
+	border: 1px solid #3a4a3c;
+	border-radius: 10px;
+	padding: 12px 10px 8px;
+	display: flex;
+	flex-direction: column;
+}
+
+.mark {
+	position: absolute;
+	top: 1px;
+	right: 16px;
+	margin: 0;
+	color: #6f8571;
+	font-size: 11px;
+	font-weight: 400;
+	letter-spacing: 0.28em;
+	pointer-events: none;
+}
+
+.panel h2 {
+	position: absolute;
+	top: -0.55em;
+	left: 10px;
+	margin: 0;
+	padding: 0 6px;
+	background: #070a08;
+	color: #6f8571;
+	font-size: 12px;
+	font-weight: 400;
+}
+
+.analog {
+	align-items: center;
+	justify-content: center;
+}
+
+.dial {
+	width: min(100%, 132px);
+	height: auto;
+}
+
+.map {
+	min-height: 0;
+	align-items: center;
+	justify-content: center;
+}
+
+.map-grid {
+	flex: 0 0 auto;
+	height: 112px;
+	width: auto;
+	max-width: 100%;
+	aspect-ratio: 64 / 16;
+	align-self: center;
+	display: grid;
+	grid-template-columns: repeat(64, 1fr);
+	grid-template-rows: repeat(16, 1fr);
+	gap: 1px;
+}
+
+.map-grid i {
+	display: block;
+	border-radius: 1px;
+}
+
+.map-grid i.land {
+	background: #4f6b52;
+}
+
+.map-grid i.land.band {
+	background: #b7ec9a;
+}
+
+.info,
+.digital {
+	justify-content: space-between;
+	text-align: center;
+}
+
+.digital {
 	container-type: size;
 }
 
-/*
- * The SVG fills the case exactly. It is drawn in the case's own coordinate system, so it needs no
- * aspect-ratio maths of its own — the viewBox does it.
- */
-.case svg {
-	width: 100%;
-	height: 100%;
+.digital > .lcd {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 0;
+	/* Seven rows of blocks, so the em size has to stay near a tenth of the panel. */
+	font-size: min(11.5cqh, 6.6cqw, 46px);
+}
+
+.info p,
+.digital p {
+	margin: 0;
+}
+
+.dim {
+	color: #6f8571;
+	font-size: 12px;
+}
+
+.city {
+	color: #c9f2b0;
+	font-size: 16px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+}
+
+.hairline {
+	height: 1px;
+	margin: 6px 8px;
+	background: #3a4a3c;
+}
+
+.title {
+	letter-spacing: 0.14em;
+}
+
+.readout {
+	display: flex;
+	justify-content: center;
+	align-items: flex-end;
+	gap: 10px;
+	min-height: 0;
+}
+
+.lcd {
+	line-height: 0.92;
+	font-size: inherit;
+	white-space: pre;
+}
+
+.lcd.small {
+	font-size: max(12px, 0.48em);
+}
+
+.lcd-line {
 	display: block;
 }
 
-/*
- * WIN-2's exception, and INT-2/INT-3 with it.
- *
- * The pushers are the interface; a drag region over them would make the widget unclickable. The LCD is
- * a click target too (INT-3), and the case body beneath everything stays draggable.
- */
-.case .pusher,
-.case .pusher-label,
-.case .lcd-content,
-.case .lcd-glass,
-.case .lcd-bezel {
+.lcd .on {
+	color: #c9f2b0;
+}
+
+.lcd .off {
+	/* Barely above the panel. A brighter ghost segment turns a 9 into an 8. */
+	color: #101612;
+}
+
+.side {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	justify-content: space-between;
+	align-self: stretch;
+	min-width: 2.2em;
+}
+
+.ampm {
+	color: #c9f2b0;
+	font-size: max(13px, 0.6em);
+	font-weight: 700;
+}
+
+.power {
+	min-height: 1em;
+}
+
+.zones {
+	grid-column: 1 / -1;
+}
+
+.list {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
 	-webkit-app-region: no-drag;
 }
 
-/*
- * A pressed pusher is already drawn depressed by the face; this only removes the browser's own focus
- * ring, which would be a blue halo on a matte black case.
- */
-.case path,
-.case rect,
-.case circle {
-	outline: none;
+.list::-webkit-scrollbar {
+	width: 8px;
 }
 
-/* The casing's own text is drawn as SVG `<text>` with no font family of its own, so this is the
-   fallback for the case print only. The LCD never uses it — every LCD character is seven segments. */
-.case text {
-	font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+.list::-webkit-scrollbar-thumb {
+	background: #3a4a3c;
+	border-radius: 4px;
+}
+
+.rule {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 4px 8px;
+	color: #6f8571;
+	font-size: 11px;
+}
+
+.rule::before,
+.rule::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: #3a4a3c;
+}
+
+.row {
+	display: grid;
+	grid-template-columns: 1.1em 2.6em minmax(0, 1.4fr) 4.6em 4.2em 8.6em 5.4em 2em;
+	gap: 0.45em;
+	width: 100%;
+	margin: 0;
+	padding: 2px 8px;
+	border: 0;
+	background: transparent;
+	color: #6f8571;
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	white-space: nowrap;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.row .name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.row.favorite {
+	color: #c9f2b0;
+}
+
+.row.selected {
+	background: #173220;
+	color: #c9f2b0;
+	font-weight: 700;
+}
+
+.footer {
+	grid-column: 1 / -1;
+	-webkit-app-region: no-drag;
+}
+
+.hints,
+.notice {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 0.4em 0.9em;
+	margin: 0;
+	color: #6f8571;
+	font-size: 12px;
+}
+
+.notice {
+	color: #c9f2b0;
+}
+
+.hints button {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: #c9f2b0;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+#resize {
+	position: absolute;
+	right: 3px;
+	bottom: 3px;
+	width: 16px;
+	height: 16px;
+	cursor: nwse-resize;
+	-webkit-app-region: no-drag;
+	background: linear-gradient(
+		135deg,
+		transparent 0 45%,
+		#6f8571 45% 55%,
+		transparent 55% 70%,
+		#6f8571 70% 80%,
+		transparent 80%
+	);
 }

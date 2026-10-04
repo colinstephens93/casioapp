@@ -75,8 +75,13 @@ export interface WidgetConfig {
 	readonly battery: number;
 }
 
-/** The default window: the case at a comfortable size, centred by the host on first run. */
-export const DEFAULT_BOUNDS: Bounds = { x: 0, y: 0, width: 460, height: 560 };
+/**
+ * The default window.
+ *
+ * Wide enough for the map beside the dial and the zone list under them, and short of filling a
+ * screen. The window clamps a little either side of this; see `WINDOW_LIMIT` in `window.cts`.
+ */
+export const DEFAULT_BOUNDS: Bounds = { x: 0, y: 0, width: 920, height: 640 };
 
 /** Smallest usable window. Below this the case's letterboxing leaves no room for the device. */
 export const MIN_SIZE = { width: 240, height: 280 } as const;

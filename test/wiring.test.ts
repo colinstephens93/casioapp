@@ -268,10 +268,10 @@ describe('the tray (WIN-3, INT-7, NFR-9)', () => {
 		// WIN-3.
 		assert.ok(labels.includes('Show'), `WIN-3: a Show item. Found: ${labels.join(' | ')}`);
 		assert.ok(labels.some((label) => /Quit/.test(label)), 'WIN-3: a Quit item');
-		// INT-7's four actions.
-		assert.ok(labels.includes('Next mode'), 'INT-7: mode switch');
-		assert.ok(labels.some((label) => /Settings/.test(label)), 'INT-7: settings');
-		assert.ok(labels.includes('Reset battery'), 'INT-7: reset battery');
+		// The watch's mode and battery items are gone with the face. Settings still opens the file.
+		assert.ok(labels.some((label) => /Settings/.test(label)), 'settings opens the config file');
+		assert.equal(labels.includes('Next mode'), false, 'the watch mode item is not on this menu');
+		assert.equal(labels.includes('Reset battery'), false, 'the watch battery item is not on this menu');
 		// Beyond the requirements, and the reason is in the class: the only escape from a window dragged
 		// onto a monitor that no longer exists.
 		assert.ok(labels.some((label) => /Reset window position/.test(label)), 'WIN-9: the recovery path');
@@ -432,8 +432,8 @@ describe('the process boot (M1, ALM-10, NFR-6)', () => {
 		// to be added here, which is what stops the bridge quietly growing an escape hatch.
 		assert.deepEqual(
 			electron.channels(),
-			['widget:alert', 'widget:menu', 'widget:restore', 'widget:state'],
-			'NFR-6: the IPC surface is exactly these four channels',
+			['widget:alert', 'widget:menu', 'widget:restore', 'widget:size', 'widget:state'],
+			'NFR-6: the IPC surface is exactly these channels',
 		);
 
 		await boot.stop();
@@ -541,7 +541,7 @@ describe('the process boot (M1, ALM-10, NFR-6)', () => {
 });
 
 describe('the preload bridge (NFR-6)', () => {
-	it('exposes exactly five methods on `widget`', async () => {
+	it('exposes the widget bridge and no generic send', async () => {
 		// The renderer's entire view of the outside world. `contextBridge.exposeInMainWorld` is called
 		// with whatever object the preload builds, so this asserts the shape of that object — and the
 		// absence of a generic `send` passthrough, which would make the isolation pointless.
@@ -551,7 +551,7 @@ describe('the preload bridge (NFR-6)', () => {
 		// The preload runs in Electron, so it cannot be loaded here; its emitted source is inspected
 		// instead. That is weaker than executing it, and it is stated rather than glossed: what it can
 		// catch is a channel name drifting or a forbidden passthrough appearing.
-		for (const channel of ['widget:alert', 'widget:state', 'widget:restore', 'widget:menu']) {
+		for (const channel of ['widget:alert', 'widget:state', 'widget:restore', 'widget:menu', 'widget:size']) {
 			assert.match(source, new RegExp(channel.replace(':', ':')), `the bridge uses ${channel}`);
 		}
 		for (const forbidden of ['send: ', 'invoke: ', 'ipcRenderer.send(']) {
@@ -585,8 +585,6 @@ function actions(isVisible: () => boolean): Record<string, unknown> {
 	return {
 		onToggleVisibility: () => {},
 		onResetPosition: () => {},
-		onNextMode: () => {},
-		onResetBattery: () => {},
 		onSettings: () => {},
 		onQuit: () => {},
 		// A **getter**, not a captured boolean. `isVisible: () => visible` where `visible` is a parameter

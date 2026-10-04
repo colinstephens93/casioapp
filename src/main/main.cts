@@ -174,11 +174,6 @@ function createTray(): WidgetTray {
 			widgetWindow?.resetPosition();
 			rememberBounds();
 		},
-		onNextMode: () => widgetWindow?.browserWindow?.webContents.send('widget:context', 'mode'),
-		onResetBattery: () => {
-			widgetWindow?.browserWindow?.webContents.send('widget:context', 'battery-reset');
-			save({ battery: 1 });
-		},
 		onSettings: openSettings,
 		onQuit: () => {
 			quitting = true;
@@ -221,6 +216,19 @@ function registerIpc(): void {
 	// chrome should not grow a second chrome when right-clicked.
 	ipcMain.on('widget:menu', () => {
 		showContextMenu();
+	});
+
+	// The corner grip. A transparent frameless window has no edge to drag, so the page asks for a
+	// size and `resizeTo` refuses anything outside the limit. It cannot move or close the window.
+	ipcMain.on('widget:size', (_event, value: unknown) => {
+		if (typeof value !== 'object' || value === null) {
+			return;
+		}
+		const candidate = value as { width?: unknown; height?: unknown };
+		if (typeof candidate.width !== 'number' || typeof candidate.height !== 'number') {
+			return;
+		}
+		widgetWindow?.resizeTo(candidate.width, candidate.height);
 	});
 
 	// The renderer's restored state on startup, so it can resume the mode it was left in (MOD-6).
@@ -279,18 +287,7 @@ function parseAlert(
  */
 function showContextMenu(): void {
 	const menu = Menu.buildFromTemplate([
-		{
-			label: 'Switch mode',
-			click: () => widgetWindow?.browserWindow?.webContents.send('widget:context', 'mode'),
-		},
 		{ label: 'Settings…', click: openSettings },
-		{
-			label: 'Reset battery',
-			click: () => {
-				widgetWindow?.browserWindow?.webContents.send('widget:context', 'battery-reset');
-				save({ battery: 1 });
-			},
-		},
 		{ type: 'separator' },
 		{ label: 'Hide', click: () => widgetWindow?.hide() },
 		{

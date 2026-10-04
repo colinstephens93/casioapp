@@ -373,7 +373,7 @@ describe('the configuration file on disk (NFR-11)', () => {
 	it('treats a file that only differs in formatting as intact', () => {
 		// A human's editor will reindent or reorder the file. Reporting that as a repair would fire the
 		// "your settings were reset" path on a file that was perfectly fine.
-		const reordered = `{"battery":1,"watch":"","hidden":false,"version":${CONFIG_VERSION},"bounds":{"height":560,"width":460,"y":0,"x":0}}`;
+		const reordered = `{"battery":1,"watch":"","hidden":false,"version":${CONFIG_VERSION},"bounds":{"height":640,"width":920,"y":0,"x":0}}`;
 		const file = tempConfigFile(reordered);
 		const result = file.load();
 		assert.equal(result.repaired, false, 'whitespace and key order are not damage');

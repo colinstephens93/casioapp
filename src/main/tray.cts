@@ -30,8 +30,6 @@ const TOOLTIP = 'casioapp — world clock';
 export interface TrayActions {
 	readonly onToggleVisibility: () => void;
 	readonly onResetPosition: () => void;
-	readonly onNextMode: () => void;
-	readonly onResetBattery: () => void;
 	readonly onSettings: () => void;
 	readonly onQuit: () => void;
 	/** True while the window is visible, so the Show/Hide item can be labelled correctly. */
@@ -123,10 +121,8 @@ export class WidgetTray {
 				},
 			},
 			{ type: 'separator' },
-			// INT-7's four actions, in the order the requirement lists them.
-			{ label: 'Next mode', click: () => this.actions.onNextMode() },
+			// The config file is still the settings. Mode and battery belonged to the watch face.
 			{ label: 'Settings…', click: () => this.actions.onSettings() },
-			{ label: 'Reset battery', click: () => this.actions.onResetBattery() },
 			{ type: 'separator' },
 			// Beyond the requirements, and the reason is in the class comment: this is the only way out
 			// of a window that has been dragged onto a monitor that no longer exists.

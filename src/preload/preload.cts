@@ -64,6 +64,14 @@ const api = {
 		ipcRenderer.send('widget:menu');
 	},
 
+	/**
+	 * The corner grip. Size only: the page cannot move or close the window from here.
+	 * The main process clamps the numbers.
+	 */
+	setSize: (width: number, height: number): void => {
+		ipcRenderer.send('widget:size', { width, height });
+	},
+
 	/** INT-7: the native context menu asks the renderer to act. Returns an unsubscribe function. */
 	onContext: (listener: (action: ContextAction) => void): (() => void) => {
 		// Scoped to our one channel and wrapping the listener, so the renderer never receives an
