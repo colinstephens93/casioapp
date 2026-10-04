@@ -146,7 +146,7 @@ export function stateFor(scenario: Scenario): DisplayState {
 	};
 }
 
-/** The scenarios the preview draws, in reading order. */
+/** The scenarios the preview draws, in reading order: the live one first, then the fixed gallery. */
 export function scenarios(now: Date): Scenario[] {
 	// A fixed northern-summer instant for the static cases, so the output never drifts.
 	const summer = new Date(Date.UTC(2026, 6, 15, 22, 48, 37));
@@ -154,6 +154,19 @@ export function scenarios(now: Date): Scenario[] {
 	const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 	return [
+		{
+			// First, because it is the only card the controls act on and the only one that moves. It used
+			// to be last, so the page opened with nineteen frozen faces and the interactive watch was
+			// 600 KB further down.
+			title: 'Live',
+			note: 'The system clock and zone, updating every second. This is what the widget itself will show, and the card the controls above drive.',
+			zone: local,
+			homeZone: local,
+			at: now,
+			clock: '24h',
+			mode: 'timekeeping',
+			dst: 'auto',
+		},
 		{
 			title: 'Timekeeping, 24-hour',
 			note: 'Tokyo at 24-hour. The subdial always tracks the Home City (T-1), and the map band follows the displayed zone.',
@@ -389,16 +402,6 @@ export function scenarios(now: Date): Scenario[] {
 			battery: 0.31,
 			illuminated: true,
 		},
-		{
-			title: 'Live',
-			note: 'The system clock and zone, updating every second. This is what the widget itself will show.',
-			zone: local,
-			homeZone: local,
-			at: now,
-			clock: '24h',
-			mode: 'timekeeping',
-			dst: 'auto',
-		},
 	];
 }
 
@@ -441,7 +444,6 @@ export function renderPreview(now: Date): string {
 		black case, whether the world map reads as a map, and whether the lit band is convincing.
 	</p>
 </header>
-<main>${cards}</main>
 <section class="controls" id="controls">
 	<h2>Live controls</h2>
 	<p class="hint">
@@ -473,6 +475,14 @@ export function renderPreview(now: Date): string {
 	<p class="status" id="status"></p>
 	<p class="hint">Right-click the watch for the context menu the Electron shell will supply (INT-7).</p>
 	<div class="context-menu" id="context-menu"></div>
+</section>
+<section class="gallery">
+	<h2>Every screen</h2>
+	<p class="hint">
+		The same face at each mode and register it can reach, rendered from fixed instants so the
+		images are stable. The <em>Live</em> card comes first and is the one the controls above drive.
+	</p>
+	<div class="cards">${cards}</div>
 </section>
 <script src="./bundle.js"></script>
 <script>${LIVE_SCRIPT}</script>
@@ -508,16 +518,20 @@ body {
 	color: #d8ded2;
 	font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-header { max-width: 1100px; margin: 0 auto 32px; }
+header { max-width: 1100px; margin: 0 auto 28px; }
 h1 { margin: 0 0 12px; font-size: 20px; font-weight: 600; letter-spacing: 0.02em; }
 header p { margin: 0 0 8px; max-width: 76ch; color: #a9b3a2; }
 header .hint { color: #8c9686; font-style: italic; }
-main {
+/* The controls come first and the gallery below them. They used to sit at the very foot of the page,
+   behind nineteen static cards — about 600 KB into a 612 KB document — and the user had to be told to
+   scroll past everything to find them, which is a layout that hides the page's only interactive part. */
+.gallery { max-width: 1400px; margin: 44px auto 0; }
+.gallery h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.gallery .hint { margin: 0 0 18px; max-width: 76ch; color: #8c9686; font-size: 12.5px; }
+.cards {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
 	gap: 28px;
-	max-width: 1400px;
-	margin: 0 auto;
 }
 .card {
 	margin: 0;
@@ -537,7 +551,7 @@ main {
 
 .controls {
 	max-width: 1100px;
-	margin: 36px auto 0;
+	margin: 0 auto;
 	padding: 18px 20px 20px;
 	background: #191c18;
 	border: 1px solid #2a2f27;

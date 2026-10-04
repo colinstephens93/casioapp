@@ -199,18 +199,34 @@ function ariaLabel(state: DisplayState): string {
 	return `Casio AE-1200WH style world clock — ${screen}, ${state.cityCode}, ${time}`;
 }
 
-/** The clipped-corner case, its bezel lettering, the LCD window and the four pushers. */
+/** The clipped-corner case, its display panel, the bezel lettering, the LCD window and the pushers. */
 function renderCase(state: DisplayState): string {
-	const { width, height, cornerClip, lcd } = FACE;
+	const { width, height, cornerClip, lcd, bezelPanel, screws } = FACE;
 	const parts: string[] = [];
 
-	// The body, with the clipped corners that define the "Royale" silhouette.
+	// The body, with the clipped corners that define the "Royale" silhouette. It is brushed steel: the
+	// colour pass is what changed this from the black resin the face was first built as.
 	parts.push(`<path class="case-body" d="${clippedRect(0, 0, width, height, cornerClip)}" />`);
 	// The two-piece seam, a vertical line down the middle of the case sides.
 	parts.push(`<path class="case-seam" d="M 0 6 L 0 ${height - 6}" />`);
 	parts.push(`<path class="case-seam" d="M ${width} 6 L ${width} ${height - 6}" />`);
 
-	// The recessed LCD window.
+	// The four case screws, in the steel above and below the panel. Drawn as a disc with a slot, which
+	// is what reads as a screw at this size — a plain circle reads as a rivet.
+	for (const screw of screws) {
+		parts.push(`<circle class="case-screw" cx="${screw.cx}" cy="${screw.cy}" r="9" />`);
+		parts.push(
+			`<path class="case-screw-slot" d="M ${screw.cx - 5} ${screw.cy} L ${screw.cx + 5} ${screw.cy}" />`,
+		);
+	}
+
+	// The black display panel. Everything printed in this band goes on top of it, which is what the real
+	// watch does and what separates "steel case with a black display" from "black case with gold print".
+	parts.push(
+		`<rect class="bezel-panel" x="${bezelPanel.x}" y="${bezelPanel.y}" width="${bezelPanel.width}" height="${bezelPanel.height}" rx="10" />`,
+	);
+
+	// The recessed LCD window, inside the panel.
 	parts.push(
 		`<rect class="lcd-bezel" x="${lcd.x - 7}" y="${lcd.y - 7}" width="${lcd.width + 14}" height="${lcd.height + 14}" rx="6" />`,
 	);
@@ -218,20 +234,21 @@ function renderCase(state: DisplayState): string {
 		`<rect class="lcd-glass" x="${lcd.x}" y="${lcd.y}" width="${lcd.width}" height="${lcd.height}" rx="4" />`,
 	);
 
-	// Bezel lettering. Positions are proportional to the case so the text stays put at any size.
-	// The anchor value is `middle`, not `center`: `center` is not a valid SVG `text-anchor` and is
-	// silently ignored, which left-aligned the bezel text instead of centring it.
-	parts.push(bezelText('WORLD TIME', width / 2, 52, 'middle'));
-	// The printed lines below the LCD are pushed to the case's own foot. They used to sit at
-	// `height - 46` and `height - 22`, which put them *inside* the LCD window — the rasterised face
-	// showed the `10 YEAR BATTERY` print sitting on top of the main digits, and the `ILLUMINATOR`
-	// line on top of the seconds.
-	parts.push(bezelText('ILLUMINATOR', width / 2, height - 12, 'middle'));
-	parts.push(`<text class="case-print accent" x="${width - 52}" y="34" text-anchor="end">CASIO</text>`);
-	parts.push(`<text class="case-print accent" x="30" y="70">5 ALARMS</text>`);
-	parts.push(`<text class="case-print" x="30" y="418">WR100M</text>`);
-	// The watch prints MUTE on the lower bezel, which is where the LCD has no room for it.
-	parts.push(`<text class="case-print" x="${width - 30}" y="418" text-anchor="end">MUTE</text>`);
+	// Bezel lettering, all of it on the black panel and clear of the LCD's bezel (which spans y 89..393
+	// and x 48..402). The anchor value is `middle`, not `center`: `center` is not a valid SVG
+	// `text-anchor` and is silently ignored, which left-aligned the bezel text instead of centring it.
+	parts.push(bezelText('WORLD TIME', width / 2, 72, 'middle'));
+	parts.push(`<text class="case-print accent" x="${bezelPanel.x + 14}" y="84">5 ALARMS</text>`);
+	parts.push(
+		`<text class="case-print accent" x="${bezelPanel.x + bezelPanel.width - 14}" y="84" text-anchor="end">CASIO</text>`,
+	);
+	// Below the LCD, inside the panel. These used to sit at the case's own foot on the black body; with a
+	// steel case they must stay on the panel, or they would be white print on silver.
+	parts.push(`<text class="case-print" x="${bezelPanel.x + 14}" y="352">WR100M</text>`);
+	parts.push(
+		`<text class="case-print" x="${bezelPanel.x + bezelPanel.width - 14}" y="352" text-anchor="end">MUTE</text>`,
+	);
+	parts.push(bezelText('ILLUMINATOR', width / 2, 396, 'middle'));
 
 	parts.push(renderPushers(state));
 	return parts.join('');
@@ -908,9 +925,11 @@ export function fitText(
  */
 function renderBattery(level: number): string {
 	const percent = Math.max(0, Math.min(100, Math.round(level * 100)));
+	// On the display panel, in the band between the LCD's foot and the ILLUMINATOR line — not on the
+	// case foot, which is bare steel now that the case is silver.
 	return [
-		`<text class="case-print accent battery-label" x="${FACE.width / 2}" y="406" text-anchor="middle">10 YEAR BATTERY</text>`,
-		`<text class="battery-value" x="${FACE.width / 2}" y="418" text-anchor="middle">${percent}%</text>`,
+		`<text class="case-print accent battery-label" x="${FACE.width / 2}" y="330" text-anchor="middle">10 YEAR BATTERY</text>`,
+		`<text class="battery-value" x="${FACE.width / 2}" y="350" text-anchor="middle">${percent}%</text>`,
 	].join('');
 }
 

@@ -303,6 +303,60 @@ the caseback.
 
 ## 7. The LCD look
 
+> ### CORRECTION — measured 2026-10, across two colour passes
+>
+> **The two reference photographs, both gitignored, both used below:**
+>
+> | File | What it is |
+> |---|---|
+> | `notes/casio-ae1200wh-reference.webp` | lit product shot on white, 720×720 — the harsher lighting, and the one that misled the first measurement |
+> | `Casio-AE1200-1.webp` (repository root) | worn on a wrist, 2000×1333 — higher resolution, and the one that settled the palette |
+>
+> **This section was wrong about what the watch looks like**, and then the first correction of it was
+> wrong too, in a way worth recording because it is the more instructive error.
+>
+> It originally described a matte black resin case with gold lettering and a pale yellow-green LCD
+> covering most of the face. Both are wrong. But the *first* measurement pass — taken from
+> `notes/casio-ae1200wh-reference.webp`, by region census over fairly large areas — then "corrected" it
+> to say the LCD's unsettled state is **dark olive** and only its lit panels are pale. That was also
+> wrong, and wrong for a specific reason: the sampled regions in that photograph are mostly **shadowed
+> recesses** rather than panel, so averaging over them turned the LCD's dark surround into the LCD's
+> background and inverted the contrast.
+>
+> `Casio-AE1200-1.webp` (added to the repository afterwards) resolves it, and agrees with the *eye*
+> reading in both photographs:
+>
+> | Region | Measured |
+> |---|---|
+> | Steel case, lit flank | `#d2dcdc` / `#dcdcdc` |
+> | Steel case, shaded flank | `#9c9c9c` / `#b4b4b4` |
+> | Black display panel | `#181818`, shaded `#0c0c0c` |
+> | **LCD lit panel** | **`#aab4b4`** — pale grey, mildly blue |
+> | LCD substrate between panels | only slightly darker, `#9aa5a6` |
+> | **LCD lit segment** | **`#0c1a24`** / `#00141e` — a dark **blue**, not black |
+> | Map land | `#00000a` on a `#b4bebe` window |
+>
+> So the description the section gave *first* was closer to right than the measurement that "fixed" it:
+> it is a **pale LCD with dark segments**, on a **stainless steel** case with a **black display panel**
+> inset into it. What the original text got wrong was the **colour cast** (olive/yellow-green where the
+> truth is a slightly blue-grey) and the **materials** (resin and gold where the truth is steel and
+> white). What the first correction got wrong was the **polarity** — a much worse error, because it
+> made the rendered face muddy olive and low-contrast.
+>
+> Also settled: the bezel lettering (`WORLD TIME`, `CASIO`, `5 ALARMS`, `WR100M`, `ILLUMINATOR`) is
+> **white on the black panel**, not gold on the case, and `5 ALARMS` / `CASIO` / `WR100M` are printed
+> *inside* that panel. `WORLD TIME` and `ILLUMINATOR` are the exception: they sit on the **steel**,
+> above and below the panel.
+>
+> Requirement `OI-2` still stands — these are appearance measurements from photographs, not
+> specifications, and the lighting is doing work in all of them. The two photographs disagree by a
+> visible amount on warmth, which is exactly what `OI-2` predicts. The paragraphs below are retained
+> unedited so both errors stay visible.
+>
+> **The lesson for this document:** a region census over a large area of a photograph measures the
+> lighting and the shadows as much as it measures the object. Sample small, sample a *known* material,
+> and cross-check against a second photograph before believing the number.
+
 From direct inspection of product photographs:
 
 - **Background:** pale **yellow-green / cream** — noticeably lighter and more yellow than an F-91W's

@@ -10,40 +10,81 @@
  * touching any drawing code.
  */
 export const THEME = {
-	// The LCD is a pale yellow-green, noticeably lighter and more yellow than an F-91W's grey-green,
-	// and not a negative/olive panel.
-	lcdBackground: '#cfd8a0',
+	// ## Where these values come from
+	//
+	// Not from memory, and not from one photograph. The palette was measured twice, by region census
+	// (most-common colour per region), from the two references in `notes/` and the repository root, and
+	// the two disagreed in a way that is worth recording because the first reading was wrong:
+	//
+	//   Casio-AE1200-1.webp (product shot, on a wrist)   LCD lit panel #aab4b4 / #b4bebe, digits #0c1a24
+	//   casio-ae1200wh-reference.webp (lit product shot)  LCD panels #a8a890, reads olive
+	//
+	// The first pass sampled large regions of the second image, which are mostly **shadowed
+	// recesses** rather than panel, and concluded the LCD's unsettled state was dark olive with pale
+	// accents. Run the other way round. The LCD's lit panels are **light**, the substrate showing
+	// through between them is what is dark, and the segments are a **dark blue**, not black:
+	//
+	//   steel case, lit flank      #d2dcdc / #dcdcdc
+	//   steel case, shaded         #9c9c9c / #b4b4b4
+	//   display panel (the black)  #181818, shaded #0c0c0c
+	//   LCD lit panel              #aab4b4, first reading #a8a890 (warmer light on the other shot)
+	//   LCD lit segment            #0c1a24, and #00141e in the strip text — blue, unambiguously
+	//   map land                   #00000a on a #b4bebe window
+	//
+	// The most important corrections, both of which an "obvious" reading of the photos gets wrong:
+	//
+	// 1. **The LCD's lit panels are LIGHT and the substrate between them is dark.** "Dark segments on a
+	//    pale background" is what the two large areas look like from a distance; measured, the pale area
+	//    is the panel and the dark area around it is recess and bezel. Passing the dark recesses off as
+	//    the substrate is what made the first colour pass render a muddy olive face.
+	// 2. **The segments are a dark blue, not black.** `#0c1a24` rather than any neutral.
+	//
+	// There is still almost no true black: the darkest large area is the display panel at `#181818`.
+
+	/** The LCD's own substrate, between and behind the lit panels. Only just darker than a panel. */
+	lcdBackground: '#9aa5a6',
 	/** The faint printed dots that give the LCD its texture. */
-	lcdTexture: '#bcc886',
-	/** Unlit segments, visible as a ghost on a real LCD. */
-	segmentOff: '#b6c184',
-	/** Lit segments: dark green-black, with the main digits the darkest element. */
-	segmentOn: '#1b2410',
+	lcdTexture: '#8d9899',
+	/** A lit but idle LCD panel — the signal window, the map window's floor, the main cell. */
+	lcdLit: '#aab4b4',
+	/** Unlit segments, visible as a faint ghost on a real LCD. */
+	segmentOff: '#7c898b',
+	/** Lit segments: a very dark blue, which is the colour this watch's digits actually are. */
+	segmentOn: '#0c1a24',
 
 	/** The lit time-zone band on the world map. */
-	mapBand: '#3d4a22',
+	mapBand: '#7d8c8e',
 	/** Landmass inside the band stays visible against it. */
-	mapLand: '#1b2410',
+	mapLand: '#12181c',
+	/** The map window's frame, which is a discrete part on the real watch rather than printed-on land. */
+	mapFrame: '#5a6a6d',
 
-	/** Matte black resin case. */
-	caseBody: '#141414',
+	/** Brushed stainless: the case and bezel are steel, not resin. */
+	caseBody: '#d8d8d8',
+	/** The case's shadowed faces, which is what makes it read as metal rather than flat grey. */
+	caseShade: '#b4b4b4',
 	/** The two-piece case seam. */
-	caseSeam: '#000000',
+	caseSeam: '#8c8c8c',
 	/** Clipped corners catch light differently from the flat faces. */
-	caseEdge: '#2a2a2a',
-	/** Gold/ochre accent print: WORLD TIME, ILLUMINATOR, 10 YEAR BATTERY. */
-	caseAccent: '#c9a15a',
-	/** Neutral print: the button labels and the smaller dial text. */
-	caseText: '#d8d8d8',
+	caseEdge: '#9c9c9c',
+	/** The black display panel the LCD sits in, carrying CASIO, 5 ALARMS and WR100M. */
+	bezelPanel: '#181818',
+	/** The bezel panel's own edge. */
+	bezelPanelEdge: '#242424',
+	/** Neutral print on the black panel: CASIO, WORLD TIME, ILLUMINATOR, WR100M. */
+	caseAccent: '#e8e8e8',
+	/** Secondary print: the button labels and the smaller dial text, which are dimmer on the real watch. */
+	caseText: '#c8c8c8',
 	/** The recessed LCD window bezel. */
-	lcdBezel: '#0b0b0b',
+	lcdBezel: '#0c0c0c',
 
 	/** The amber LED backlight wash. */
 	illumination: '#ffb347',
 
-	/** The subdial's printed ring and hub. */
-	dialRing: '#1b2410',
-	dialHub: '#1b2410',
+	/** The subdial's printed ring, numerals and hands: dark markings on a light disc. */
+	dialRing: '#12181c',
+	/** The hub at the centre of the disc. */
+	dialHub: '#0c0c0c',
 } as const;
 
 export type ThemeToken = keyof typeof THEME;
@@ -78,6 +119,28 @@ export const FACE = {
 	caseRim: 16,
 	/** The LCD window inside the case. */
 	lcd: { x: 55, y: 96, width: 340, height: 290 },
+	/**
+	 * The black display panel the LCD sits in, which carries the bezel lettering.
+	 *
+	 * Measured from `notes/casio-ae1200wh-reference.webp`: on the real watch the dark panel is the
+	 * largest black area, running from the steel's inner edge to the LCD's bezel, while CASIO,
+	 * 5 ALARMS, WORLD TIME, WR100M and ILLUMINATOR are all printed **inside** it. Before this existed
+	 * the lettering was printed straight onto the case, which is why the case read as a black plastic
+	 * body with gold text rather than steel around a black display panel.
+	 *
+	 * The LCD's bezel is inset 7 units, so the panel's own edges are clear of the glass.
+	 *
+	 * The top band carries WORLD TIME between the screws, and the foot carries WR100M, MUTE and
+	 * ILLUMINATOR. Both are inside the panel: the bezel print is on the black, never on the steel.
+	 */
+	bezelPanel: { x: 40, y: 40, width: 370, height: 372 },
+	/** The four case screws, in the steel corner bands above and below the display panel. */
+	screws: [
+		{ cx: 52, cy: 20 },
+		{ cx: 398, cy: 20 },
+		{ cx: 52, cy: 428 },
+		{ cx: 398, cy: 428 },
+	],
 	/** The analog subdial, upper-left. Occupies x 75..185, y 120..230. */
 	subdial: { cx: 130, cy: 161, r: 54 },
 	/** The world map block, upper-right. Occupies x 200..370, y 128..199. */
@@ -298,6 +361,8 @@ export const FACE_CSS = `
 
 /* ---- case ----------------------------------------------------------------------------- */
 
+/* Brushed steel. The gradient is what stops a flat fill reading as grey plastic: the real case is
+   bright along the lit flank and noticeably darker where it turns away. */
 .watch .case-body {
 	fill: var(--case-body);
 	stroke: var(--case-edge);
@@ -306,6 +371,24 @@ export const FACE_CSS = `
 .watch .case-seam {
 	stroke: var(--case-seam);
 	stroke-width: 3;
+	fill: none;
+}
+/* The dark display panel that carries the bezel lettering and holds the LCD. On the real watch this
+   is the largest single area of "black", and it is inset from the steel case all round. */
+.watch .bezel-panel {
+	fill: var(--bezel-panel);
+	stroke: var(--bezel-panel-edge);
+	stroke-width: 2;
+}
+/* The four case screws, on the steel above and below the panel. */
+.watch .case-screw {
+	fill: var(--case-seam);
+	stroke: var(--case-edge);
+	stroke-width: 1.5;
+}
+.watch .case-screw-slot {
+	stroke: var(--bezel-panel);
+	stroke-width: 1.5;
 	fill: none;
 }
 .watch .pusher {
@@ -319,6 +402,7 @@ export const FACE_CSS = `
 	font-size: 13px;
 	letter-spacing: 0.06em;
 }
+/* The bezel lettering is white on the black panel, not gold on black. */
 .watch .case-print.accent {
 	fill: var(--case-accent);
 }
@@ -334,9 +418,12 @@ export const FACE_CSS = `
 	font-size: 11px;
 	letter-spacing: 0.12em;
 }
-/* The battery percentage is only meaningful once the cell has started to drain. */
+/* The battery percentage is only meaningful once the cell has started to drain. It sits on the black
+   panel, not on the LCD, so it is printed light — it used to take the LCD background token, which was
+   pale until the LCD became a dark substrate, at which point that inheritance would have drawn it
+   dark-on-dark and made it invisible. */
 .watch .battery-value {
-	fill: var(--lcd-background);
+	fill: var(--lcd-lit);
 	font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 	font-size: 10px;
 	opacity: 0.85;
@@ -385,9 +472,18 @@ export const FACE_CSS = `
 .watch .lcd-content {
 	fill: none;
 }
+/* A *lit* panel on the LCD: the signal window, the map window, the subdial disc and the main digit
+   cells are all pale on the real watch while the substrate between them is dark olive. One class for
+   all of them, because on the real panel they are literally the same material. */
+.watch .lit-panel {
+	fill: var(--lcd-lit);
+}
 
 /* ---- world map ------------------------------------------------------------------------ */
 
+.watch .map-frame {
+	fill: var(--map-frame);
+}
 .watch .map-band {
 	fill: var(--map-band);
 }
@@ -397,14 +493,14 @@ export const FACE_CSS = `
 }
 /* Land inside the lit band must stay readable against it (requirement MAP-6). */
 .watch .map-land.in-band {
-	fill: var(--lcd-background);
+	fill: var(--lcd-lit);
 	opacity: 0.9;
 }
 
 /* ---- subdial -------------------------------------------------------------------------- */
 
 .watch .dial-face {
-	fill: var(--lcd-background);
+	fill: var(--lcd-lit);
 }
 .watch .dial-ring {
 	fill: none;

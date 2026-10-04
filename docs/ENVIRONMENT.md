@@ -84,6 +84,27 @@ Interpretation:
 it, unit-test every headless module, and generate the renderer as static HTML/SVG — but the
 window must be opened by a human on an ordinary desktop.
 
+### 4a. The same limit blocks headless screenshots, so keep a "render it and look" route — SETTLED
+
+Confirmed again in the colour-pass session, this time by trying to use the *installed* browsers rather
+than Electron, because a real screenshot would have been the ideal way to verify a visual change:
+
+| Test | Result |
+|---|---|
+| `chrome --headless=new --no-sandbox --screenshot` | `FATAL: mojo\public\cpp\platform\platform_channel.cc:112 Check failed: . : Access is denied. (0x5)` — no image |
+| `chrome --headless=old --no-sandbox --single-process --no-zygote` | Same fatal, same line. `--single-process` changes nothing |
+| `msedge` / `chrome` binaries | Both found and both launch; both die at the same channel |
+
+So this is **not** a missing-browser or a wrong-flags problem, and it is not worth retrying: the mojo
+platform channel is the named-pipe requirement of point 2 above, and no combination of Chromium flags
+removes its need for it. The `--single-process` attempt is worth recording because it *looks* like the
+obvious workaround and fails identically.
+
+**Consequence for how visual work is done here:** there is no way for an agent in this sandbox to see
+what a browser sees. Every visual change therefore needs the human, and the best an agent can do is (a)
+keep `scripts/svg_to_png.py` honest — see §7 — and (b) produce the watermarked iteration raster *and*
+the preview page in one step, so the human's browser trip answers the question the raster cannot.
+
 ## 5. `node --test` spawns children — SOLVED with `--test-isolation=none`
 
 Node's test runner spawns a child process per test file **with piped stdio**, so a plain
@@ -120,15 +141,20 @@ its **drawing**. The face is generated as an SVG string by a pure function, so i
 to a PNG and the image inspected:
 
 ```
-node scripts/build.mjs
-node scripts/bundle-preview.mjs
-node scripts/make-preview.mjs
+npm run build
 node scripts/extract-svg.mjs 0 dist/preview/face-0.svg
-python scripts/svg_to_png.py dist/preview/face-0.svg dist/preview/face-0.png 2
+python scripts/svg_to_png.py dist/preview/face-0.svg review/face-0.png 2 --label "what this is"
 ```
 
+Write the **PNG** to `review/`, not to `dist/`: every build recleans `dist/`, so a raster left there is
+deleted by the next one — which is how the rasters from one session were lost. `review/` is not
+gitignored.
+
+Note that `extract-svg.mjs 0` is the **Live** card, because the interactive card is now first on the
+page. The fixed gallery starts at index 1.
+
 Why a custom rasteriser: every ready-made option is blocked here. Edge and Chromium die at
-Chromium's named-pipe IPC even with `--no-sandbox` and `--headless=new`, and no SVG library
+Chromium's named-pipe IPC even with `--no-sandbox` and `--headless=new` — see §4a — and no SVG library
 (`cairosvg`, `svglib`, `reportlab`) is installed. Pillow is, so `scripts/svg_to_png.py` implements
 the small subset of SVG the renderer emits — paths, rects, circles, lines, text, and `<use>`
 references into the glyph sprite.
@@ -136,6 +162,25 @@ references into the glyph sprite.
 It parses the **real generated SVG**, so what it draws is genuine renderer output rather than a
 re-implementation. It is an inspection aid, not a source of truth: the unit tests and the browser
 preview remain authoritative, and it ignores the decimal point (drawn as an arc).
+
+### The palette is read from the SVG, not transcribed into the Python
+
+This tool used to carry its own copy of the theme — a `TOKENS` dict and a `CLASS_STYLE` dict, both
+hand-written. That made it a **third** copy of the colour model, and a copy is a thing that can
+silently disagree with the original: a colour pass would have changed `theme.ts` while the rasteriser
+kept drawing the old palette, and the image handed over for review would have been of a face that no
+longer existed. That is the same failure as the sprite lookup it once re-implemented, and the project
+has already paid for that lesson once.
+
+So the table is gone. `parse_stylesheet()` reads the custom properties and the class rules out of the
+`<style>` block that `renderFace()` embeds, resolves `var(--token)` against them, and **fails loudly**
+if the SVG carries no stylesheet rather than falling back to substituted colours. `stroke`,
+`stroke-width` and `font-size` are read the same way, which is what stopped the seams, the screw slots
+and the subdial's ring rendering as shapeless fills.
+
+What it still does not honour, and should not be trusted about: the CSS cascade beyond one class, the
+`mix-blend-mode` on the illumination wash, text metrics beyond a single monospace face, and stroke
+joins.
 
 This mattered more than expected. The first rasterisation exposed four defects that every test had
 passed and no amount of reading the markup would have revealed:

@@ -177,7 +177,21 @@ export function renderMap(mode: ScreenMode, displayedOffset: number, homeOffset:
 
 	const parts: string[] = [];
 
-	// The band is drawn first, as a full-height block behind everything.
+	// The map's own window, which the real watch draws as a discrete lit panel rather than printing
+	// land straight onto the LCD's substrate. Drawn first so the band and land sit inside it.
+	// The inset is small because the layout is tight: the subdial's disc ends 16 units to the left and
+	// the panel must not grow into it.
+	const windowInset = 3;
+	const windowWidth = layout.cellWidth * layout.columns;
+	const windowHeight = layout.cellHeight * layout.rows;
+	parts.push(
+		`<rect class="map-frame" x="${round(layout.x - windowInset)}" y="${round(layout.y - windowInset)}" width="${round(windowWidth + windowInset * 2)}" height="${round(windowHeight + windowInset * 2)}" rx="3" />`,
+	);
+	parts.push(
+		`<rect class="lit-panel" x="${round(layout.x)}" y="${round(layout.y)}" width="${round(windowWidth)}" height="${round(windowHeight)}" rx="2" />`,
+	);
+
+	// The band is drawn next, as a full-height block behind the land.
 	for (const column of band) {
 		parts.push(
 			`<rect class="map-band" x="${round(layout.x + column * layout.cellWidth)}" y="${round(layout.y)}" width="${round(layout.cellWidth)}" height="${round(layout.rows * layout.cellHeight)}" />`,

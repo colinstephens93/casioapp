@@ -21,7 +21,7 @@ npm run build            # compiles, bundles the preview, generates it, verifies
 Then:
 
 ```sh
-npm test                 # 361 tests, no build step needed
+npm test                 # 429 tests, no build step needed
 npm run typecheck        # four tsconfigs — run this, see §5
 ```
 
@@ -31,9 +31,10 @@ npm run typecheck        # four tsconfigs — run this, see §5
 dist/preview/index.html
 ```
 
-Open it in a browser. Nineteen rendered faces plus live controls. No server needed. The *Live* card is
-driven by the real `WatchController`, its pushers can be clicked and held, and right-clicking the case
-opens the context menu (INT-7).
+Open it in a browser. Nineteen rendered faces plus live controls. No server needed. The controls are at
+the **top** of the page and the *Live* card is the first card in the gallery, so there is no scrolling
+involved. The *Live* card is driven by the real `WatchController`, its pushers can be clicked and held,
+and right-clicking the case opens the context menu (INT-7).
 
 ## 2. What this project is
 
@@ -66,6 +67,7 @@ src/main/       Electron main process (CommonJS, .cts)
 src/preload/    the narrow context-bridge surface (CommonJS, .cts)
 test/           unit tests, run directly by Node with no build step
 scripts/        build, bundle, preview, rasterise, verify — all Node or Python
+review/         watermarked iteration rasters handed to a human, outside the build's reach
 ```
 
 ### Rule 1 — one-way dependency
@@ -275,18 +277,28 @@ The related ordering matters too: `load` checks `isFromTheFuture` **before** the
 because a file from the future differs from what this build would write by definition and would
 otherwise be reported as damaged.
 
-### The rasteriser is not eyes
+### The rasteriser is not eyes — and it must not carry its own copy of the truth
 
-`scripts/svg_to_png.py` **does not implement SVG**. It re-implements the sprite lookup and hard-codes the
-class-to-colour table a second time, so it renders its own interpretation rather than following the rules
-a browser follows. It drew a *perfect* face while a real browser drew a green rectangle with no digits —
-for the entire project. It is useful for geometry, layout and colour *tokens*, and useless as evidence
-that a browser will render something.
+`scripts/svg_to_png.py` **does not implement SVG**. It re-implements the sprite lookup, so it renders
+its own interpretation rather than following the rules a browser follows. It drew a *perfect* face
+while a real browser drew a green rectangle with no digits — for the entire project. It is useful for
+geometry, layout and colour *tokens*, and useless as evidence that a browser will render something.
+
+It used to make this worse in a second way: it held a **hand-written copy of the whole palette**, so a
+colour pass would have changed `theme.ts` while the tool kept drawing the old colours, and the image
+handed over for review would have been of a face that no longer existed. It now parses the palette out
+of the `<style>` block that `renderFace()` embeds, and fails loudly if the SVG has none. **Do not
+reintroduce a table of colours into that file** — the same rule as `FACE_CSS`: one copy, beside the
+thing it describes.
 
 Three separate times in one session a tool agreed with itself instead of with reality: this rasteriser,
 the fake Electron, and a verifier that crashed inside its own regex. **When the question is "does this
 look right", the answer comes from a real browser and a human.** Use `--label` to watermark any image
 handed to a reviewer, so the image identifies itself.
+
+Also note: **headless Chrome/Edge cannot run here either.** Both are installed and both die at
+Chromium's named-pipe IPC under `--headless`, so there is no way for an agent in this sandbox to take a
+screenshot. See `docs/ENVIRONMENT.md` §4a; do not spend time re-deriving it.
 
 ### One class, one rule — and the face must carry its own stylesheet
 
@@ -338,14 +350,20 @@ in the repo:
 
 ```sh
 npm run build
-node scripts/extract-svg.mjs 0 dist/preview/face-0.svg     # Nth face from the preview page
-python scripts/svg_to_png.py dist/preview/face-0.svg out.png 2
+node scripts/extract-svg.mjs 1 dist/preview/face-1.svg     # Nth face from the preview page
+python scripts/svg_to_png.py dist/preview/face-1.svg out.png 2 --label "what this is"
 ```
 
+**Index 0 is the Live card**, because the interactive card now leads the gallery; the fixed scenarios
+start at index 1. `--label` watermarks the image in a real font after rasterisation, so a review image
+identifies itself and cannot be affected by a fault in the SVG.
+
 Then look at `out.png`. `scripts/svg_to_png.py` is a small SVG rasteriser for the subset this renderer
-emits; it parses the **real generated SVG**, so the image is genuine output. It is an inspection aid,
+emits; it parses the **real generated SVG** and reads the palette out of the stylesheet that SVG
+carries, so the image is genuine output rather than a parallel interpretation. It is an inspection aid,
 not a source of truth — the tests and the browser preview remain authoritative, and it ignores the
-decimal point.
+decimal point. It does not honour the CSS cascade, `mix-blend-mode`, stroke joins or real text metrics,
+so **the illumination wash and the type will differ from a browser.**
 
 `scripts/glyph_boxes.py` complements it: it lists every glyph instance with its box and flags any that
 leave the LCD. Useful when a test failure names coordinates rather than a screen.
@@ -381,25 +399,50 @@ and §11 why the notification's category is toast XML rather than an Electron op
 
 ### Needs a human, not an agent
 
-1. **Colours.** The research could not measure them from photography. They live as named tokens in
-   `THEME` in `theme.ts` so a pass is one edit each.
-2. **Segment proportions and stroke weight.** Authored by eye, never compared to the real watch.
-3. **The case proportions**, now 450 × 445 rather than the device's 450 × 421. See RESEARCH.md §6.
+1. **Colours.** The research could not measure them from photography, so the first pass was estimated;
+   it has since been measured from the two reference photos in `notes/` and the repository root. The
+   measurement took **two attempts** — the first sampled the shadowed recesses of one photograph and
+   concluded the LCD was dark olive, which inverted the contrast. The LCD is pale (`#aab4b4`) with dark
+   **blue** segments (`#0c1a24`). They live as named tokens in `THEME` in `theme.ts`, so a further pass
+   is one edit each. Whether the result *looks* right is still a browser question — there is no way to
+   screenshot one from here.
+2. **Segment proportions and stroke weight.** Authored by eye, never compared to the real watch. The
+   rasteriser cannot show stroke weight faithfully, so this one genuinely needs a browser.
+3. **The case proportions**, still 450 × 445 rather than the device's 450 × 421. See RESEARCH.md §6.
 4. **The World Time name rule.** Thirty-eight of the forty-nine names do not fit the row and are shown
    as codes. The alternative is a wider row, which costs the code field or the register indicator — a
    design call, not an engineering one.
-5. **The product name.** `royale` is a placeholder and appears in `electron-builder.yml`'s `appId`.
+5. **The `ILLUMINATOR` band and the map's resolution.** On the real watch `ILLUMINATOR` is printed on
+   the steel below the black panel; here it is inside the panel. And the map is still full-resolution
+   dot-matrix, which reads as noise at the size the face gives it.
+6. **The product name.** `royale` is a placeholder and appears in `electron-builder.yml`'s `appId`.
 
-Open `dist/preview/index.html` and compare it against the real watch. That is the fastest route to
-correcting the first four.
+Open `dist/preview/index.html` and compare it against the photo in `notes/`. That is the fastest route
+to correcting the first five, and the only route for the first two.
 
 ## 8. Repository state
 
-Four commits on `main`; the most recent, `continued dev`, took M0–M7 plus M8's code and the whole
-Electron shell.
+Nine commits on `main`; the most recent is `75e7c6f`, which fixed the face's missing stylesheet, the
+launcher, and recorded the colour gap.
 
-**Uncommitted:** the fake-Electron wiring test (`test/wiring.test.ts`, `test/fake-electron.mjs`), the
-`npm run check` script, and the `watch.mjs` fix — plus documentation.
+**Working tree (uncommitted, colour-pass session):** the measured palette in `src/shared/theme.ts`, the
+`FACE.bezelPanel`/`FACE.screws` geometry and the case/bezel changes in `src/renderer/face.ts`, the lit
+map window in `src/shared/map.ts`, the preview restructure in `src/renderer/preview.ts`, the stylesheet
+parsing in `scripts/svg_to_png.py`, and documentation.
+
+Nine files modified, nothing untracked. `Casio-AE1200-1.webp` is gitignored by the existing `*.webp`
+rule, which is why it does not appear in `git status` — it is the second reference photograph and the
+one that settled the palette.
+
+**This work has never been seen in a browser and is not validated.** It is green in every way this
+sandbox can check — 429 tests, four typechecks, build self-verification — and none of that can see
+whether the face draws or whether it looks like the watch. `NEXT-SESSION.md` "RESUME HERE" is the test
+plan handed to the user, and it is the next action.
+
+**`dist/` is a build product and is recleaned by every `npm run check` and `npm run build`.** Anything
+written there by `svg_to_png.py` — every review raster — is deleted by the next build. The rasters from
+this session were lost that way, so they were regenerated into **`review/`**, which is not gitignored.
+Write review images there, or regenerate them after the last build.
 
 The watcher fix is worth knowing about before trusting a development loop: `src/main` was **not**
 watched, so editing `config.ts` or `notify.ts` left `dist/main` stale while the build looked healthy.
@@ -428,4 +471,14 @@ These came out of getting them wrong, so they are worth keeping:
    choosing them one at a time.
 7. **Say which it was.** "The test was wrong" and "the code was wrong" are both acceptable outcomes;
    guessing between them is not.
+8. **A tool must not carry its own copy of the truth.** Twice now a verification tool has agreed with
+   itself instead of with the artefact: the rasteriser re-implemented the sprite lookup, and then it
+   kept a hand-written copy of the whole palette. Both times the tool drew a *perfect* picture of
+   something the browser refused, or of a face that no longer existed. Read the artefact — the SVG, the
+   stylesheet, the built module — and fail loudly rather than substituting a plausible default.
+9. **A region census measures the lighting as much as the object.** Sampling large areas of a
+   photograph of the watch measured its shadowed recesses and inverted the LCD's contrast, turning a
+   pale panel into a dark one. Sample small, sample a material you know the identity of, and
+   cross-check a second photograph before believing the number. The eye was right and the average was
+   wrong.
 
